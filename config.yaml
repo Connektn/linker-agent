@@ -1,0 +1,17 @@
+server:
+  addr: ":8080"
+
+privacy:
+  mode: "strict"
+  tenantSalt: "env:TENANT_SALT"
+
+sources:
+  stripe:
+    apiKey: "env:STRIPE_API_KEY"
+    account: ""
+    maxRequestsPerSecond: 8
+
+export:
+  mode: "file"  # "http", "file", or "both"
+  endpoint: "https://api.connektn.dev/ingest"
+  filePath: "reports/exporter_output.jsonl"

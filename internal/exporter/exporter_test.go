@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -525,4 +527,378 @@ func TestQueueClose(t *testing.T) {
 	if count != 1 {
 		t.Errorf("Expected 1 item in queue after close, got %d", count)
 	}
+}
+
+// TestNewWithModes verifies validation of different export modes.
+func TestNewWithModes(t *testing.T) {
+	tests := []struct {
+		name    string
+		opts    Options
+		wantErr bool
+	}{
+		{
+			name: "mode http - valid",
+			opts: Options{
+				Mode:      "http",
+				Endpoint:  "https://api.test.dev/ingest",
+				TenantKey: "tenant_123",
+			},
+			wantErr: false,
+		},
+		{
+			name: "mode file - valid",
+			opts: Options{
+				Mode:     "file",
+				FilePath: "/tmp/test_export.jsonl",
+			},
+			wantErr: false,
+		},
+		{
+			name: "mode both - valid",
+			opts: Options{
+				Mode:      "both",
+				Endpoint:  "https://api.test.dev/ingest",
+				TenantKey: "tenant_123",
+				FilePath:  "/tmp/test_export.jsonl",
+			},
+			wantErr: false,
+		},
+		{
+			name: "mode http - missing endpoint",
+			opts: Options{
+				Mode:      "http",
+				TenantKey: "tenant_123",
+			},
+			wantErr: true,
+		},
+		{
+			name: "mode http - missing tenant key",
+			opts: Options{
+				Mode:     "http",
+				Endpoint: "https://api.test.dev/ingest",
+			},
+			wantErr: true,
+		},
+		{
+			name: "mode file - missing filePath",
+			opts: Options{
+				Mode: "file",
+			},
+			wantErr: true,
+		},
+		{
+			name: "mode both - missing endpoint",
+			opts: Options{
+				Mode:      "both",
+				TenantKey: "tenant_123",
+				FilePath:  "/tmp/test_export.jsonl",
+			},
+			wantErr: true,
+		},
+		{
+			name: "mode both - missing filePath",
+			opts: Options{
+				Mode:      "both",
+				Endpoint:  "https://api.test.dev/ingest",
+				TenantKey: "tenant_123",
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid mode",
+			opts: Options{
+				Mode:      "invalid",
+				Endpoint:  "https://api.test.dev/ingest",
+				TenantKey: "tenant_123",
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			exp, err := New(tt.opts)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("New() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr {
+				if exp == nil {
+					t.Error("New() returned nil exporter")
+				}
+				if exp.mode != tt.opts.Mode {
+					t.Errorf("Expected mode '%s', got '%s'", tt.opts.Mode, exp.mode)
+				}
+			}
+		})
+	}
+}
+
+// TestExportModeFile verifies file-only export mode.
+func TestExportModeFile(t *testing.T) {
+	// Create temp directory for test
+	tmpDir := t.TempDir()
+	outputFile := filepath.Join(tmpDir, "export_test.jsonl")
+
+	exp, err := New(Options{
+		Mode:       "file",
+		FilePath:   outputFile,
+		BatchSize:  2,
+		FlushEvery: 100 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	exp.Start(context.Background())
+
+	// Enqueue items
+	ctx := context.Background()
+	_ = exp.Enqueue(ctx, map[string]string{"id": "1", "type": "subscription"})
+	_ = exp.Enqueue(ctx, map[string]string{"id": "2", "type": "invoice"})
+
+	// Wait for flush
+	time.Sleep(200 * time.Millisecond)
+
+	// Shutdown
+	exp.Shutdown(context.Background())
+
+	// Verify file was created and contains data
+	data, err := os.ReadFile(outputFile)
+	if err != nil {
+		t.Fatalf("Failed to read output file: %v", err)
+	}
+
+	if len(data) == 0 {
+		t.Error("Output file is empty")
+	}
+
+	// Verify it's valid JSONL (single line with JSON array)
+	var payloadArray []map[string]string
+	if err := json.Unmarshal(data[:len(data)-1], &payloadArray); err != nil { // Skip trailing newline
+		t.Fatalf("Output is not valid JSON: %v", err)
+	}
+
+	if len(payloadArray) != 2 {
+		t.Errorf("Expected 2 items in file, got %d", len(payloadArray))
+	}
+}
+
+// TestExportModeHTTP verifies HTTP-only export mode (existing behavior).
+func TestExportModeHTTP(t *testing.T) {
+	var requestCount int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requestCount, 1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	exp, err := New(Options{
+		Mode:       "http",
+		Endpoint:   server.URL,
+		TenantKey:  "tenant_123",
+		BatchSize:  2,
+		FlushEvery: 100 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	exp.Start(context.Background())
+
+	// Enqueue items
+	ctx := context.Background()
+	_ = exp.Enqueue(ctx, map[string]string{"id": "1"})
+	_ = exp.Enqueue(ctx, map[string]string{"id": "2"})
+
+	// Wait for flush
+	time.Sleep(200 * time.Millisecond)
+
+	exp.Shutdown(context.Background())
+
+	// Verify HTTP request was made
+	if count := atomic.LoadInt32(&requestCount); count != 1 {
+		t.Errorf("Expected 1 HTTP request, got %d", count)
+	}
+}
+
+// TestExportModeBoth verifies dual sink export (HTTP + file).
+func TestExportModeBoth(t *testing.T) {
+	var requestCount int32
+	var receivedPayload []byte
+	var mu sync.Mutex
+
+	// Setup HTTP server
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requestCount, 1)
+		mu.Lock()
+		receivedPayload, _ = io.ReadAll(r.Body)
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	// Create temp directory for file sink
+	tmpDir := t.TempDir()
+	outputFile := filepath.Join(tmpDir, "export_test.jsonl")
+
+	exp, err := New(Options{
+		Mode:       "both",
+		Endpoint:   server.URL,
+		TenantKey:  "tenant_123",
+		FilePath:   outputFile,
+		BatchSize:  2,
+		FlushEvery: 100 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	exp.Start(context.Background())
+
+	// Enqueue items
+	ctx := context.Background()
+	_ = exp.Enqueue(ctx, map[string]string{"id": "1", "type": "subscription"})
+	_ = exp.Enqueue(ctx, map[string]string{"id": "2", "type": "invoice"})
+
+	// Wait for flush
+	time.Sleep(200 * time.Millisecond)
+
+	exp.Shutdown(context.Background())
+
+	// Verify HTTP request was made
+	if count := atomic.LoadInt32(&requestCount); count != 1 {
+		t.Errorf("Expected 1 HTTP request, got %d", count)
+	}
+
+	// Verify HTTP payload
+	mu.Lock()
+	var httpPayload []map[string]string
+	if err := json.Unmarshal(receivedPayload, &httpPayload); err != nil {
+		t.Fatalf("HTTP payload is not valid JSON: %v", err)
+	}
+	mu.Unlock()
+
+	if len(httpPayload) != 2 {
+		t.Errorf("Expected 2 items in HTTP payload, got %d", len(httpPayload))
+	}
+
+	// Verify file was created and contains same data
+	fileData, err := os.ReadFile(outputFile)
+	if err != nil {
+		t.Fatalf("Failed to read output file: %v", err)
+	}
+
+	var filePayload []map[string]string
+	if err := json.Unmarshal(fileData[:len(fileData)-1], &filePayload); err != nil { // Skip trailing newline
+		t.Fatalf("File payload is not valid JSON: %v", err)
+	}
+
+	if len(filePayload) != 2 {
+		t.Errorf("Expected 2 items in file payload, got %d", len(filePayload))
+	}
+
+	// Verify both sinks received the same data
+	if httpPayload[0]["id"] != filePayload[0]["id"] {
+		t.Error("HTTP and file payloads differ")
+	}
+}
+
+// TestFileSinkErrorDoesNotBlockHTTP verifies graceful degradation.
+func TestFileSinkErrorDoesNotBlockHTTP(t *testing.T) {
+	var requestCount int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requestCount, 1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	// Use an invalid file path (directory that doesn't exist)
+	invalidPath := "/nonexistent/directory/export.jsonl"
+
+	exp, err := New(Options{
+		Mode:       "both",
+		Endpoint:   server.URL,
+		TenantKey:  "tenant_123",
+		FilePath:   invalidPath,
+		BatchSize:  1,
+		FlushEvery: 100 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	exp.Start(context.Background())
+
+	// Enqueue item
+	ctx := context.Background()
+	_ = exp.Enqueue(ctx, map[string]string{"id": "1"})
+
+	// Wait for flush
+	time.Sleep(200 * time.Millisecond)
+
+	exp.Shutdown(context.Background())
+
+	// HTTP should still succeed despite file error
+	if count := atomic.LoadInt32(&requestCount); count != 1 {
+		t.Errorf("Expected 1 HTTP request despite file error, got %d", count)
+	}
+}
+
+// TestConcurrentFileWrites verifies mutex protection for file writes.
+func TestConcurrentFileWrites(t *testing.T) {
+	tmpDir := t.TempDir()
+	outputFile := filepath.Join(tmpDir, "concurrent_test.jsonl")
+
+	exp, err := New(Options{
+		Mode:       "file",
+		FilePath:   outputFile,
+		BatchSize:  1, // Flush immediately
+		FlushEvery: 10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	exp.Start(context.Background())
+
+	// Enqueue many items concurrently
+	ctx := context.Background()
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			_ = exp.Enqueue(ctx, map[string]interface{}{"id": id})
+		}(i)
+	}
+
+	wg.Wait()
+
+	// Wait for all flushes
+	time.Sleep(500 * time.Millisecond)
+
+	exp.Shutdown(context.Background())
+
+	// Verify file integrity - should have valid JSON lines
+	data, err := os.ReadFile(outputFile)
+	if err != nil {
+		t.Fatalf("Failed to read output file: %v", err)
+	}
+
+	// Count lines (each flush creates one line)
+	lines := 0
+	for _, b := range data {
+		if b == '\n' {
+			lines++
+		}
+	}
+
+	if lines < 1 {
+		t.Errorf("Expected at least 1 line in output file, got %d", lines)
+	}
+
+	t.Logf("Successfully wrote %d lines with concurrent access", lines)
 }

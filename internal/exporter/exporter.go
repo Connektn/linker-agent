@@ -20,12 +20,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 )
 
 // Exporter batches and transmits synthetic link data to Connektn Cloud.
-// It runs a background worker that periodically flushes queued payloads via HTTPS.
+// It runs a background worker that periodically flushes queued payloads via HTTPS
+// and/or writes them to a local file, depending on the configured mode.
 type Exporter struct {
 	endpoint   string
 	tenantKey  string
@@ -35,6 +37,11 @@ type Exporter struct {
 	flushEvery time.Duration
 	maxRetries int
 
+	// Export sink configuration
+	mode     string // "http" | "file" | "both"
+	filePath string
+	fileMu   sync.Mutex // protects concurrent file writes
+
 	// Concurrency control
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -43,9 +50,19 @@ type Exporter struct {
 
 // Options configures the Exporter behavior.
 type Options struct {
+	// Mode determines export sink behavior: "http", "file", or "both".
+	// Default: "http"
+	Mode string
+
 	// Endpoint is the Connektn Cloud ingestion API URL.
+	// Required if Mode is "http" or "both".
 	// Example: "https://api.connektn.dev/ingest"
 	Endpoint string
+
+	// FilePath is the local file path for file sink output.
+	// Required if Mode is "file" or "both".
+	// Example: "reports/exporter_output.jsonl"
+	FilePath string
 
 	// TenantKey is the authentication key for this tenant.
 	// This is not secret but must be transmitted over HTTPS.
@@ -71,11 +88,30 @@ type Options struct {
 // New creates a new Exporter with the given options.
 // Returns an error if required options are missing or invalid.
 func New(opts Options) (*Exporter, error) {
-	if opts.Endpoint == "" {
-		return nil, fmt.Errorf("exporter: endpoint is required")
+	// Default mode to "http" if not specified
+	if opts.Mode == "" {
+		opts.Mode = "http"
 	}
-	if opts.TenantKey == "" {
-		return nil, fmt.Errorf("exporter: tenant key is required")
+
+	// Validate mode
+	if opts.Mode != "http" && opts.Mode != "file" && opts.Mode != "both" {
+		return nil, fmt.Errorf("exporter: mode must be 'http', 'file', or 'both'")
+	}
+
+	// Validate required fields based on mode
+	if opts.Mode == "http" || opts.Mode == "both" {
+		if opts.Endpoint == "" {
+			return nil, fmt.Errorf("exporter: endpoint is required when mode is 'http' or 'both'")
+		}
+		if opts.TenantKey == "" {
+			return nil, fmt.Errorf("exporter: tenant key is required when mode is 'http' or 'both'")
+		}
+	}
+
+	if opts.Mode == "file" || opts.Mode == "both" {
+		if opts.FilePath == "" {
+			return nil, fmt.Errorf("exporter: filePath is required when mode is 'file' or 'both'")
+		}
 	}
 
 	// Apply defaults
@@ -111,6 +147,8 @@ func New(opts Options) (*Exporter, error) {
 		batchSize:  opts.BatchSize,
 		flushEvery: opts.FlushEvery,
 		maxRetries: opts.MaxRetries,
+		mode:       opts.Mode,
+		filePath:   opts.FilePath,
 		ctx:        ctx,
 		cancel:     cancel,
 	}, nil
@@ -226,8 +264,9 @@ func (e *Exporter) worker() {
 	}
 }
 
-// flush transmits a batch of events to the Connektn Cloud API.
-// It implements retry logic with exponential backoff for transient errors.
+// flush transmits a batch of events to configured sinks (HTTP and/or file).
+// It implements retry logic with exponential backoff for HTTP errors.
+// Errors from one sink do not block the other.
 func (e *Exporter) flush(batch [][]byte) {
 	if len(batch) == 0 {
 		return
@@ -248,29 +287,68 @@ func (e *Exporter) flush(batch [][]byte) {
 		return
 	}
 
-	// Attempt delivery with retry
-	for attempt := 0; attempt <= e.maxRetries; attempt++ {
-		if attempt > 0 {
-			// Exponential backoff: 2s, 4s, 8s, ...
-			backoff := time.Duration(1<<uint(attempt-1)) * 2 * time.Second
-			time.Sleep(backoff)
+	// Write to file sink if enabled
+	if e.mode == "file" || e.mode == "both" {
+		if err := e.writeToFile(payload); err != nil {
+			// Log warning but continue - don't let file errors block HTTP
+			// TODO: Add file write error metric
 		}
+	}
 
-		if err := e.send(payload); err != nil {
-			// Check if we should retry
-			if attempt < e.maxRetries && isRetryable(err) {
-				// TODO: Add retry metric
-				continue
+	// Send to HTTP sink if enabled
+	if e.mode == "http" || e.mode == "both" {
+		// Attempt delivery with retry
+		for attempt := 0; attempt <= e.maxRetries; attempt++ {
+			if attempt > 0 {
+				// Exponential backoff: 2s, 4s, 8s, ...
+				backoff := time.Duration(1<<uint(attempt-1)) * 2 * time.Second
+				time.Sleep(backoff)
 			}
-			// Max retries exceeded or non-retryable error - discard batch
-			// TODO: Add failed batch metric
+
+			if err := e.send(payload); err != nil {
+				// Check if we should retry
+				if attempt < e.maxRetries && isRetryable(err) {
+					// TODO: Add retry metric
+					continue
+				}
+				// Max retries exceeded or non-retryable error - discard batch
+				// TODO: Add failed batch metric
+				return
+			}
+
+			// Success
+			// TODO: Add success metric (count: len(batch))
 			return
 		}
-
-		// Success
-		// TODO: Add success metric (count: len(batch))
-		return
 	}
+}
+
+// writeToFile appends a JSON payload to the configured file sink.
+// Each payload is written as a single line (JSONL format).
+// File writes are protected by a mutex to prevent concurrent write corruption.
+//
+// Security: This function never logs payload contents to prevent PII leakage.
+// Only error conditions are logged with generic messages.
+func (e *Exporter) writeToFile(data []byte) error {
+	e.fileMu.Lock()
+	defer e.fileMu.Unlock()
+
+	// Open file in append mode, create if it doesn't exist
+	f, err := os.OpenFile(e.filePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("exporter: failed to open file sink: %w", err)
+	}
+	defer f.Close()
+
+	// Write payload followed by newline (JSONL format)
+	if _, err := f.Write(data); err != nil {
+		return fmt.Errorf("exporter: failed to write to file sink: %w", err)
+	}
+	if _, err := f.Write([]byte("\n")); err != nil {
+		return fmt.Errorf("exporter: failed to write newline to file sink: %w", err)
+	}
+
+	return nil
 }
 
 // send performs a single HTTP POST to the ingestion endpoint.

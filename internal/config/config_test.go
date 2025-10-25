@@ -28,6 +28,9 @@ sources:
     apiKey: "sk_test_123"
     account: "acct_123"
     maxRequestsPerSecond: 10
+export:
+  mode: "file"
+  filePath: "/tmp/test.jsonl"
 `,
 			wantErr: false,
 			checkFunc: func(t *testing.T, cfg Config) {
@@ -66,6 +69,9 @@ sources:
   stripe:
     apiKey: "env:TEST_STRIPE_KEY"
     maxRequestsPerSecond: 5
+export:
+  mode: "file"
+  filePath: "/tmp/test.jsonl"
 `,
 			setEnv: map[string]string{
 				"TEST_TENANT_SALT": "env-resolved-salt",
@@ -93,6 +99,9 @@ sources:
   stripe:
     apiKey: "env: TEST_KEY_WHITESPACE "
     maxRequestsPerSecond: 8
+export:
+  mode: "file"
+  filePath: "/tmp/test.jsonl"
 `,
 			setEnv: map[string]string{
 				"TEST_SALT_WHITESPACE": "trimmed-salt",
@@ -184,6 +193,9 @@ sources:
   stripe:
     apiKey: "sk_test_123"
     maxRequestsPerSecond: 0
+export:
+  mode: "file"
+  filePath: "/tmp/test.jsonl"
 `,
 			wantErr: false,
 			checkFunc: func(t *testing.T, cfg Config) {
@@ -204,6 +216,9 @@ sources:
   stripe:
     apiKey: "sk_test_123"
     maxRequestsPerSecond: -5
+export:
+  mode: "file"
+  filePath: "/tmp/test.jsonl"
 `,
 			wantErr: false,
 			checkFunc: func(t *testing.T, cfg Config) {
@@ -222,6 +237,9 @@ privacy:
   tenantSalt: "salt"
 sources:
   stripe: null
+export:
+  mode: "file"
+  filePath: "/tmp/test.jsonl"
 `,
 			wantErr: false,
 			checkFunc: func(t *testing.T, cfg Config) {

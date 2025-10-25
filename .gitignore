@@ -43,6 +43,10 @@ vendor/
 /data/
 /cache/
 
+# Generated reports and test data
+/reports/
+/seed_reports/
+
 # Logs
 *.log
 logs/

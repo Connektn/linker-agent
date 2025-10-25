@@ -1,21 +1,21 @@
 # 🧩 Connektn Linker Agent
 
-> **Privacy-safe data reconciliation engine for Stripe-based SaaS businesses.**  
+> **Privacy-safe data reconciliation engine for Stripe-based SaaS businesses.**
 > Runs inside your infrastructure. Produces verified, anonymized customer graphs without ever exposing PII.
 
 ---
 
 ## 🔍 Overview
 
-The **Connektn Linker Agent** is the core on-prem component of the [Connektn Zero-Ownership CDP](https://connektn.dev).  
+The **Connektn Linker Agent** is the core on-premise component of the [Connektn Zero-Ownership CDP](https://connektn.dev).
 It runs inside your environment (Docker or Kubernetes) and performs **local, privacy-safe matching** between:
 
-- **Billing data** from Stripe, and  
+- **Billing data** from Stripe, and
 - **Feature-usage / analytics data** from your warehouse, product logs, or analytics platform.
 
-Instead of collecting raw data, the Linker Agent generates **synthetic identifiers and cryptographic proofs** of reconciliation, then sends only anonymized link graphs to the Connektn Cloud.
+Instead of collecting raw data, the Linker Agent generates **synthetic identifiers and cryptographic proofs** of reconciliation, then sends only anonymized link graphs to the Connektn Cloud (or exports them locally).
 
-> “Your data never leaves your infrastructure — only the math does.”
+> "Your data never leaves your infrastructure — only the math does."
 
 ---
 
@@ -31,185 +31,348 @@ tenant-infra
 │     └── feature usage, sessions, events
 │
 ├─ 🔒 Connektn Linker Agent (this service)
+│     ├── internal/config/           ← YAML + env var loader
 │     ├── internal/connectors/
-│     │     ├─ stripe/
-│     │     ├─ snowflake/
-│     │     ├─ bigquery/
-│     │     └─ postgres/
-│     ├── internal/matchers/
-│     │     ├─ hmac/
-│     │     ├─ temporal/
-│     │     ├─ sku_overlap/
-│     │     └─ similarity/
-│     ├── internal/crypto/
-│     ├── internal/otel/
-│     └── cmd/linker/
+│     │     └─ stripe/               ← ✅ Implemented
+│     ├── internal/crypto/           ← ✅ HMAC-SHA256 synthetic IDs
+│     ├── internal/models/           ← ✅ Privacy-safe data models
+│     ├── internal/exporter/         ← ✅ HTTP + file dual sink
+│     ├── internal/matchers/         ← 🚧 Coming soon
+│     └── main.go                    ← ✅ Entrypoint
 │
-└─ 🌐 Connektn Cloud (ingest API)
+└─ 🌐 Connektn Cloud (ingest API) OR local file
       └── receives only synthetic links + proofs
 ```
 
 ---
 
-## ⚙️ Features
+## ⚙️ Implemented Features
 
-- 🔐 **Zero-PII:** all hashing/encryption done locally; raw data never leaves your environment.  
-- 🧠 **Deterministic & probabilistic matchers:** HMAC joins, temporal proximity, SKU overlap, behavioral similarity.  
-- 🧾 **Proof-of-Truth:** every match emits a cryptographic proof for later verification.  
-- ⚙️ **Pluggable connectors:** Stripe, Snowflake, BigQuery, Redshift, Postgres, S3/GCS, PostHog exports.  
-- 📊 **OpenTelemetry metrics:** health, throughput, confidence distributions.  
-- 🐳 **Deploy anywhere:** single Go binary, Docker image, or Helm chart.  
-- 🧩 **YAML-based recipes:** define matching logic declaratively, no code changes needed.  
-- 🔏 **Signed releases + SBOM:** verified binaries for enterprise adoption.
+### ✅ Current Release (v0.1-alpha)
+
+- 🔐 **Zero-PII Architecture:** All customer identifiers are converted to HMAC-SHA256 synthetic IDs using tenant-specific salt
+- 📦 **Stripe Connector:** Read-only access to customers, subscriptions, and invoices with rate limiting
+- 🔧 **Configuration Loader:** YAML-based config with `env:VAR_NAME` indirection for secrets
+- 📤 **Dual Sink Exporter:**
+  - HTTP mode: sends batched payloads to Connektn Cloud
+  - File mode: writes JSONL locally for testing/debugging
+  - Both mode: exports to HTTP and file simultaneously
+- ⚡ **Retry Logic:** Exponential backoff with configurable max retries
+- 🧪 **Test Data Seeder:** Automated Stripe test data generation script (`scripts/seed_stripe_test_data.sh`)
+
+### 🚧 Roadmap (Coming Soon)
+
+- 🧠 **Matchers:** HMAC joins, temporal proximity, SKU overlap, behavioral similarity
+- 🧾 **Proof-of-Truth:** Cryptographic proof generation for each match
+- ⚙️ **Additional Connectors:** Snowflake, BigQuery, Postgres, PostHog
+- 📊 **OpenTelemetry:** Metrics and tracing
+- 🐳 **Docker Image:** Production-ready container
 
 ---
 
 ## 🚀 Quick Start
 
-### 1. Run with Docker
+### Prerequisites
+
+- Go ≥ 1.22
+- Stripe test account with API key
+- (Optional) `jq` for JSON processing
+
+### 1. Clone and Build
 
 ```bash
-docker run -d   -e CONNEKTN_TENANT_KEY=pk_live_xxx   -e STRIPE_API_KEY=rk_readonly_xxx   -e TENANT_SALT_SECRET_ARN=arn:aws:secretsmanager:region:acct:secret:tenantSalt   -v ./recipes.yaml:/etc/connektn/recipes.yaml:ro   ghcr.io/connektn/linker:latest
+git clone https://github.com/connektn/linker-agent.git
+cd linker-agent
+go build -o linker-agent main.go
 ```
 
-### 2. Example `recipes.yaml`
+### 2. Configure
+
+Create or edit `config.yaml`:
 
 ```yaml
-sources:
-  stripe:
-    apiKey: ${STRIPE_API_KEY}
-  warehouse:
-    dsn: ${WAREHOUSE_DSN}
+server:
+  addr: ":8080"
 
 privacy:
-  mode: strict
-  tenantSalt: ${TENANT_SALT_SECRET_ARN}
+  mode: "strict"                    # strict | standard
+  tenantSalt: "env:TENANT_SALT"     # Use env var indirection
 
-matchers:
-  - name: stripe_customer_id
-    method: hmac
-    fields: ["stripe.customer.id"]
-    weight: 0.6
-  - name: temporal_proximity
-    method: temporal
-    fields: ["invoice.created_at", "usage.first_seen"]
-    window: "7d"
-    weight: 0.2
-  - name: product_overlap
-    method: set_overlap
-    fields: ["invoice.line_items.sku[]", "usage.feature_sku[]"]
-    weight: 0.2
+sources:
+  stripe:
+    apiKey: "env:STRIPE_API_KEY"    # sk_test_xxx or sk_live_xxx
+    account: ""                      # Optional: connected account ID
+    maxRequestsPerSecond: 8          # Rate limiting
 
-thresholds:
-  promote: 0.85
-  candidate: 0.6
+export:
+  mode: "file"                       # "http" | "file" | "both"
+  endpoint: "https://api.connektn.dev/ingest"  # Required if mode includes "http"
+  filePath: "reports/exporter_output.jsonl"    # Required if mode includes "file"
 ```
 
-### 3. Observe health and metrics
+**Configuration Modes:**
+
+- **`mode: "http"`** - Export to Connektn Cloud API only
+- **`mode: "file"`** - Export to local JSONL file only (useful for testing)
+- **`mode: "both"`** - Export to both HTTP and file simultaneously
+
+### 3. Set Environment Variables
 
 ```bash
-curl http://localhost:8080/healthz
-curl http://localhost:8080/metrics   # Prometheus format
+export STRIPE_API_KEY=sk_test_xxxxx
+export TENANT_SALT=your-secret-salt-value
+```
+
+### 4. Run the Agent
+
+```bash
+go run main.go
+```
+
+**Expected Output:**
+
+```
+2025/10/25 22:45:34 Configuration loaded successfully
+2025/10/25 22:45:34 Privacy mode: strict
+2025/10/25 22:45:34 Stripe client initialized
+2025/10/25 22:45:35 Stripe smoke check passed: found 50 customers
+2025/10/25 22:45:35 Exporter initialized (mode: file)
+2025/10/25 22:45:35 Fetching subscriptions from Stripe...
+2025/10/25 22:45:35 Retrieved 50 subscriptions
+2025/10/25 22:45:35 Fetching invoices from Stripe...
+2025/10/25 22:45:39 Retrieved 50 invoices
+2025/10/25 22:45:39 Processed 50 subscriptions with synthetic IDs
+2025/10/25 22:45:39 Processed 50 invoices with synthetic IDs
+2025/10/25 22:45:39 Enqueued 100 items total
+✅ Exporter run finished — output captured in reports/exporter_output.jsonl
+```
+
+### 5. Verify Exported Data
+
+```bash
+# Count exported items
+cat reports/exporter_output.jsonl | jq -s 'flatten | length'
+
+# View sample subscription (with synthetic customer ID)
+cat reports/exporter_output.jsonl | jq -s '.[0][0]'
+```
+
+**Sample Output:**
+
+```json
+{
+  "id": "sub_1SMDwAIdkv43nOTxDsp1Ta4Z",
+  "customer": "b5736b4580a2b7ce174b104924da4b37de314de64b37ae20fe9004c5bf1ee497",
+  "status": "trialing",
+  "items": [
+    {
+      "price_id": "price_1SMDr8Idkv43nOTxwRR8nIPc",
+      "product_id": "prod_TIpWYUTOkozTj0",
+      "quantity": 1
+    }
+  ],
+  "created_at": 1761423582
+}
+```
+
+Notice: `customer` field contains a SHA-256 hash, not the original Stripe customer ID.
+
+---
+
+## 🧪 Seeding Test Data
+
+For testing and development, use the included Stripe test data seeder:
+
+```bash
+# Set your Stripe test API key
+export STRIPE_API_KEY=sk_test_xxxxx
+
+# Run with default settings (50 customers, 5 products)
+bash scripts/seed_stripe_test_data.sh
+
+# Or customize via environment variables
+export NUM_CUSTOMERS=100
+export NUM_PRODUCTS=10
+export SUBSCRIBE_PROBABILITY=80  # 80% of customers get subscriptions
+bash scripts/seed_stripe_test_data.sh
+```
+
+**What it creates:**
+
+- ✅ 50 customers (with test payment methods attached via `tok_visa`)
+- ✅ 5 products with monthly recurring prices
+- ✅ ~50 subscriptions (mix of active and trialing status)
+- ✅ Invoices automatically generated by Stripe
+- ✅ ~15% of historical charges refunded randomly
+- ✅ All objects tagged with `metadata[seeded_by]=ConnektnSeeder` for easy cleanup
+
+**Output:**
+
+```
+📊 Summary:
+   Customers:     50
+   Products:      5
+   Prices:        5
+   Subscriptions: 50
+   Invoices:      50
+   Refunds:       7
+
+💾 Reports saved in: seed_reports/
+   - summary.json
+   - customers.txt
+   - subscriptions.txt
+   - price_ids.txt
+
+🎯 All objects tagged with metadata[seeded_by]=ConnektnSeeder for easy cleanup
 ```
 
 ---
 
-## 🧠 How It Works
+## 🔐 Privacy & Security Principles
 
-1. **Ingest:** connects to Stripe and your chosen usage source (read-only).  
-2. **Hash:** converts sensitive identifiers into synthetic IDs using HMAC(userId, tenantSalt).  
-3. **Match:** applies deterministic + probabilistic matchers defined in `recipes.yaml`.  
-4. **Verify:** signs each match with a `linkProof` hash.  
-5. **Emit:** sends only synthetic link edges + proofs to Connektn Cloud (via HTTPS).  
+### Zero-PII Architecture
 
----
+The Linker Agent is designed from the ground up to **never expose personally identifiable information (PII)**:
 
-## 🧩 Connectors (planned roadmap)
+1. **Synthetic IDs:** All customer identifiers are replaced with HMAC-SHA256 hashes:
+   ```
+   syntheticID = HMAC-SHA256(tenantSalt, originalCustomerID)
+   ```
 
-| Connector | Type | Status |
-|------------|------|--------|
-| Stripe | Billing | ✅ v0.1 |
-| Postgres | Usage DB | 🧩 in progress |
-| Snowflake | Usage Warehouse | 🧩 in progress |
-| BigQuery | Usage Warehouse | 🧩 in progress |
-| PostHog | Analytics API | 🧩 in progress |
-| S3/GCS | File exports | 🧩 planned |
+2. **No PII Fields:** The following fields are **never** collected or exported:
+   - Customer names
+   - Email addresses
+   - Phone numbers
+   - Physical addresses
+   - Payment method details (card numbers, expiry dates)
 
----
+3. **Local Processing:** All hashing and ID generation happens **inside your infrastructure**. Raw data never leaves your environment.
 
-## 🧮 Matchers
+4. **Verifiable Privacy:** You can audit the exported data yourself:
+   ```bash
+   # Verify no email addresses in output
+   cat reports/exporter_output.jsonl | grep -i email || echo "✅ No emails found"
 
-| Matcher | Description | Output |
-|----------|--------------|---------|
-| **HMAC Join** | Deterministic hash-based match on known ID fields. | confidence = 1.0 |
-| **Temporal Proximity** | Correlates events by time windows (e.g., signup ↔ first invoice). | 0.5–0.9 |
-| **SKU Overlap** | Compares purchased SKUs with features used. | 0.6–0.9 |
-| **Similarity** | Behavioral vector similarity using cosine distance. | 0.4–0.8 |
+   # Verify no PII fields
+   cat reports/exporter_output.jsonl | jq '.' | grep -iE '(name|email|phone|address)' || echo "✅ No PII found"
+   ```
+
+### Tenant Salt Management
+
+The `tenantSalt` is a cryptographic secret that ensures synthetic IDs are:
+- **Unique per tenant:** Same customer ID from different tenants produces different hashes
+- **Deterministic:** Same customer ID always produces the same hash (enables linkage)
+- **Irreversible:** Cannot derive original customer ID from the hash
+
+**Best Practices:**
+
+- Generate with: `openssl rand -hex 32`
+- Store in: AWS Secrets Manager, HashiCorp Vault, or Kubernetes Secrets
+- Never commit to version control
+- Rotate carefully (requires re-processing historical data)
 
 ---
 
 ## 🧰 Development
 
-### Requirements
-- Go ≥ 1.22  
-- Docker (optional)  
-- Make
+### Project Structure
 
-### Build
-
-```bash
-make build
-# or
-go build ./cmd/linker
+```
+linker-agent/
+├── main.go                        # Entrypoint
+├── config.yaml                    # Configuration file
+├── internal/
+│   ├── config/                    # YAML + env loader
+│   │   ├── config.go
+│   │   └── config_test.go
+│   ├── connectors/
+│   │   └── stripe/                # Stripe API connector
+│   │       ├── client.go          # Client + rate limiting
+│   │       ├── fetch.go           # List operations
+│   │       ├── models.go          # Raw Stripe models
+│   │       └── stripe_test.go
+│   ├── crypto/
+│   │   ├── hmac.go                # HMAC-SHA256 helpers
+│   │   └── hmac_test.go
+│   ├── models/
+│   │   └── models.go              # Privacy-safe models
+│   └── exporter/
+│       ├── exporter.go            # Dual sink exporter
+│       ├── exporter_test.go
+│       └── queue.go               # Buffered queue
+└── scripts/
+    └── seed_stripe_test_data.sh   # Test data generator
 ```
 
-### Run locally
+### Running Tests
 
 ```bash
-CONNEKTN_TENANT_KEY=dev_tenant STRIPE_API_KEY=sk_test_xxx TENANT_SALT_SECRET=local_salt go run ./cmd/linker
+# Run all tests
+go test ./...
+
+# Run with coverage
+go test -cover ./...
+
+# Run specific package tests
+go test ./internal/config/
+go test ./internal/exporter/
 ```
 
-### Lint & Test
+### Building
 
 ```bash
-make lint test
+# Development build
+go build -o linker-agent main.go
+
+# Production build with optimizations
+go build -ldflags="-s -w" -o linker-agent main.go
 ```
 
 ---
 
-## 🧪 Observability
+## 📊 Export Formats
 
-The agent exposes Prometheus and OpenTelemetry endpoints:
+### JSONL (File Mode)
 
-| Endpoint | Purpose |
-|-----------|----------|
-| `/healthz` | basic health |
-| `/metrics` | Prometheus metrics |
-| `/readyz` | readiness probe |
-| `/debug/pprof` | optional profiling (disabled by default) |
+Each line contains a JSON array of batched items:
 
----
+```jsonl
+[{"id":"sub_123","customer":"a1b2c3...","status":"active"},{"id":"in_456","customer":"a1b2c3...","status":"paid"}]
+[{"id":"sub_789","customer":"d4e5f6...","status":"trialing"}]
+```
 
-## 🔐 Security & Privacy
+### HTTP Payload (Cloud Mode)
 
-- **Zero ownership:** no raw PII is ever transmitted or stored.  
-- **TenantSalt:** cryptographic salt generated and stored by the tenant.  
-- **Signed releases:** all binaries and Docker images are signed with `cosign`.  
-- **SBOM:** each release publishes a full software bill of materials.  
-- **SOC 2 roadmap:** Connektn aims for certification once public beta stabilizes.
+Batched arrays sent as POST requests:
 
-Please see [`SECURITY.md`](SECURITY.md) for responsible disclosure policy.
+```json
+[
+  {
+    "id": "sub_1SMDwAIdkv43nOTxDsp1Ta4Z",
+    "customer": "b5736b4580a2b7ce174b104924da4b37de314de64b37ae20fe9004c5bf1ee497",
+    "status": "trialing",
+    "items": [...],
+    "created_at": 1761423582
+  },
+  ...
+]
+```
+
+**Headers:**
+- `Authorization: Bearer <tenant-key>`
+- `Content-Type: application/json`
+- `Idempotency-Key: <uuid-v4>` (for safe retries)
 
 ---
 
 ## 🤝 Contributing
 
-We welcome issues and pull requests!  
-Please read [`CONTRIBUTING.md`](CONTRIBUTING.md) before submitting.
+We welcome issues and pull requests!
 
-- Run `make lint test` before pushing.  
-- Sign commits with GPG or SSH key (required for maintainers).  
-- Discuss larger design changes in [Discussions](https://github.com/connektn/linker-agent/discussions).
+- Run `go test ./...` before pushing
+- Follow [Go Code Review Comments](https://go.dev/wiki/CodeReviewComments)
+- See [`CLAUDE.md`](CLAUDE.md) for AI collaboration guidelines
+- Discuss larger design changes in [Discussions](https://github.com/connektn/linker-agent/discussions)
 
 ---
 
@@ -219,23 +382,42 @@ Apache License 2.0 — see [`LICENSE`](LICENSE).
 
 ---
 
-## 🧭 Roadmap
+## 🧭 Current Status & Roadmap
 
-| Milestone | Description | ETA |
-|------------|--------------|------|
-| **v0.1** | Stripe + Postgres connectors, HMAC + temporal matchers, Docker image, Helm chart | Q1 2026 |
-| **v0.2** | BigQuery, Snowflake connectors, OpenTelemetry dashboard | Q2 2026 |
-| **v0.3** | Behavioral similarity matcher, probabilistic ensemble | Q3 2026 |
-| **v1.0** | Full connector set + managed updates | Q4 2026 |
+### ✅ v0.1-alpha (Current)
+
+- [x] Configuration loader with env var support
+- [x] Stripe connector (customers, subscriptions, invoices)
+- [x] HMAC-SHA256 synthetic ID generation
+- [x] Dual sink exporter (HTTP + file)
+- [x] Retry logic with exponential backoff
+- [x] Test data seeder script
+- [x] Privacy verification tooling
+
+### 🚧 v0.2 (Next)
+
+- [ ] HMAC matcher implementation
+- [ ] Temporal proximity matcher
+- [ ] Postgres connector
+- [ ] OpenTelemetry metrics
+- [ ] Docker image + Helm chart
+
+### 📅 v0.3+
+
+- [ ] BigQuery connector
+- [ ] Snowflake connector
+- [ ] SKU overlap matcher
+- [ ] Behavioral similarity matcher
+- [ ] Web UI for match review
 
 ---
 
 ## 💬 Support & Contact
 
-📫 founders@connektn.dev  
-💻 [https://connektn.dev](https://connektn.dev)  
+📫 founders@connektn.dev
+💻 [https://connektn.dev](https://connektn.dev)
 🐙 [GitHub Issues](https://github.com/connektn/linker-agent/issues)
 
 ---
 
-> **Connektn Linker Agent** — _“We reconcile your customer truth, without ever seeing who your customers are.”_
+> **Connektn Linker Agent** — _"We reconcile your customer truth, without ever seeing who your customers are."_

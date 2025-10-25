@@ -37,11 +37,19 @@ type Sources struct {
 	Stripe *StripeSource `yaml:"stripe"`
 }
 
+// Export configures export sink behavior (HTTP endpoint and/or local file).
+type Export struct {
+	Mode     string `yaml:"mode"`     // "http" | "file" | "both" (default: "http")
+	Endpoint string `yaml:"endpoint"` // HTTP endpoint URL (required if mode includes "http")
+	FilePath string `yaml:"filePath"` // Local file path (required if mode includes "file")
+}
+
 // Config is the root configuration structure.
 type Config struct {
 	Server  Server  `yaml:"server"`
 	Privacy Privacy `yaml:"privacy"`
 	Sources Sources `yaml:"sources"`
+	Export  Export  `yaml:"export"`
 }
 
 // Load reads a YAML configuration file from the given path, resolves environment
@@ -126,6 +134,31 @@ func validate(cfg *Config) error {
 		// Default maxRequestsPerSecond to 8 if not positive
 		if cfg.Sources.Stripe.MaxRequestsPerSecond <= 0 {
 			cfg.Sources.Stripe.MaxRequestsPerSecond = 8
+		}
+	}
+
+	// Validate export configuration
+	// Default mode to "http" if not specified
+	if cfg.Export.Mode == "" {
+		cfg.Export.Mode = "http"
+	}
+
+	// Validate mode value
+	if cfg.Export.Mode != "http" && cfg.Export.Mode != "file" && cfg.Export.Mode != "both" {
+		return fmt.Errorf("export.mode must be 'http', 'file', or 'both'")
+	}
+
+	// If mode includes "http", endpoint must be set
+	if cfg.Export.Mode == "http" || cfg.Export.Mode == "both" {
+		if cfg.Export.Endpoint == "" {
+			return fmt.Errorf("export.endpoint must be set when mode is 'http' or 'both'")
+		}
+	}
+
+	// If mode includes "file", filePath must be set
+	if cfg.Export.Mode == "file" || cfg.Export.Mode == "both" {
+		if cfg.Export.FilePath == "" {
+			return fmt.Errorf("export.filePath must be set when mode is 'file' or 'both'")
 		}
 	}
 
