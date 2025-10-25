@@ -1,0 +1,12 @@
+server:
+  addr: ":8080"
+
+privacy:
+  mode: "strict"                 # strict | standard
+  tenantSalt: "env:TENANT_SALT"  # resolved from environment
+
+sources:
+  stripe:
+    apiKey: "env:STRIPE_API_KEY" # resolved from environment
+    account: ""                  # optional (Stripe Connect account)
+    maxRequestsPerSecond: 8
