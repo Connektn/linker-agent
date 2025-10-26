@@ -187,6 +187,68 @@ func (c *Client) ListSubscriptions(ctx context.Context, customerID string, limit
 	return result, nil
 }
 
+// ListRawSubscriptions retrieves raw Stripe subscription objects for sanitization with synthetic IDs.
+// This method returns the full Stripe API response objects without basic sanitization,
+// allowing the caller to apply tenant-scoped synthetic ID generation.
+//
+// Parameters:
+//   - ctx: context for cancellation
+//   - customerID: optional customer ID to filter by (empty string for all)
+//   - limit: maximum number of subscriptions to return (0 defaults to 10)
+//
+// Returns an empty slice on success with no results, never nil.
+func (c *Client) ListRawSubscriptions(ctx context.Context, customerID string, limit int64) ([]*stripe.Subscription, error) {
+	// Apply rate limiting
+	if err := c.limiter.acquire(ctx); err != nil {
+		return nil, fmt.Errorf("stripe list raw subscriptions rate limit: %w", err)
+	}
+
+	// Default limit to 10 if not specified
+	if limit <= 0 {
+		limit = 10
+	}
+
+	params := &stripe.SubscriptionListParams{
+		ListParams: stripe.ListParams{
+			Limit: stripe.Int64(limit),
+		},
+	}
+
+	// Filter by customer if specified
+	if customerID != "" {
+		params.Customer = stripe.String(customerID)
+	}
+
+	// Set Stripe Connect account if specified
+	if c.account != "" {
+		params.SetStripeAccount(c.account)
+	}
+
+	var result []*stripe.Subscription
+	var listErr error
+
+	// Use the V1 API with Seq2 iterator pattern
+	c.api.V1Subscriptions.List(ctx, params)(func(sub *stripe.Subscription, err error) bool {
+		if err != nil {
+			listErr = err
+			return false // stop iteration on error
+		}
+		result = append(result, sub)
+		return true // continue iteration
+	})
+
+	if listErr != nil {
+		return nil, fmt.Errorf("stripe list raw subscriptions: %w", listErr)
+	}
+
+	// Return empty slice instead of nil
+	if result == nil {
+		result = []*stripe.Subscription{}
+	}
+
+	return result, nil
+}
+
 // ListInvoices retrieves a list of invoices, optionally filtered by customer ID
 // and/or subscription ID. Returns sanitized invoice data with no PII.
 //
@@ -249,6 +311,74 @@ func (c *Client) ListInvoices(ctx context.Context, customerID, subscriptionID st
 	// Return empty slice instead of nil
 	if result == nil {
 		result = []Invoice{}
+	}
+
+	return result, nil
+}
+
+// ListRawInvoices retrieves raw Stripe invoice objects for sanitization with synthetic IDs.
+// This method returns the full Stripe API response objects without basic sanitization,
+// allowing the caller to apply tenant-scoped synthetic ID generation.
+//
+// Parameters:
+//   - ctx: context for cancellation
+//   - customerID: optional customer ID to filter by (empty string for all)
+//   - subscriptionID: optional subscription ID to filter by (empty string for all)
+//   - limit: maximum number of invoices to return (0 defaults to 10)
+//
+// Returns an empty slice on success with no results, never nil.
+func (c *Client) ListRawInvoices(ctx context.Context, customerID, subscriptionID string, limit int64) ([]*stripe.Invoice, error) {
+	// Apply rate limiting
+	if err := c.limiter.acquire(ctx); err != nil {
+		return nil, fmt.Errorf("stripe list raw invoices rate limit: %w", err)
+	}
+
+	// Default limit to 10 if not specified
+	if limit <= 0 {
+		limit = 10
+	}
+
+	params := &stripe.InvoiceListParams{
+		ListParams: stripe.ListParams{
+			Limit: stripe.Int64(limit),
+		},
+	}
+
+	// Filter by customer if specified
+	if customerID != "" {
+		params.Customer = stripe.String(customerID)
+	}
+
+	// Filter by subscription if specified
+	if subscriptionID != "" {
+		params.Subscription = stripe.String(subscriptionID)
+	}
+
+	// Set Stripe Connect account if specified
+	if c.account != "" {
+		params.SetStripeAccount(c.account)
+	}
+
+	var result []*stripe.Invoice
+	var listErr error
+
+	// Use the V1 API with Seq2 iterator pattern
+	c.api.V1Invoices.List(ctx, params)(func(inv *stripe.Invoice, err error) bool {
+		if err != nil {
+			listErr = err
+			return false // stop iteration on error
+		}
+		result = append(result, inv)
+		return true // continue iteration
+	})
+
+	if listErr != nil {
+		return nil, fmt.Errorf("stripe list raw invoices: %w", listErr)
+	}
+
+	// Return empty slice instead of nil
+	if result == nil {
+		result = []*stripe.Invoice{}
 	}
 
 	return result, nil

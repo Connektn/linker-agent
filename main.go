@@ -7,8 +7,7 @@ import (
 	"time"
 
 	"linker-agent/internal/config"
-	"linker-agent/internal/connectors/stripe"
-	"linker-agent/internal/crypto"
+	stripec "linker-agent/internal/connectors/stripe"
 	"linker-agent/internal/exporter"
 	"linker-agent/internal/models"
 )
@@ -73,72 +72,41 @@ func main() {
 	exp.Start(ctx)
 	log.Println("Exporter worker started")
 
-	// Fetch Stripe data
+	// Fetch raw Stripe data for sanitization with synthetic IDs
 	log.Println("Fetching subscriptions from Stripe...")
-	subscriptions, err := stripeClient.ListSubscriptions(ctx, "", 100)
+	rawSubscriptions, err := stripeClient.ListRawSubscriptions(ctx, "", 100)
 	if err != nil {
-		log.Fatalf("Failed to list subscriptions: %v", err)
+		log.Fatalf("Failed to list raw subscriptions: %v", err)
 	}
-	log.Printf("Retrieved %d subscriptions", len(subscriptions))
+	log.Printf("Retrieved %d subscriptions", len(rawSubscriptions))
 
 	log.Println("Fetching invoices from Stripe...")
-	invoices, err := stripeClient.ListInvoices(ctx, "", "", 100)
+	rawInvoices, err := stripeClient.ListRawInvoices(ctx, "", "", 100)
 	if err != nil {
-		log.Fatalf("Failed to list invoices: %v", err)
+		log.Fatalf("Failed to list raw invoices: %v", err)
 	}
-	log.Printf("Retrieved %d invoices", len(invoices))
+	log.Printf("Retrieved %d invoices", len(rawInvoices))
 
-	// Convert to models and apply synthetic IDs
+	// Sanitize and convert to models with synthetic IDs
 	var modelSubscriptions []models.Subscription
 	var modelInvoices []models.Invoice
 
-	// Process subscriptions
-	for _, sub := range subscriptions {
-		// Generate synthetic customer ID
-		synCustomerID, err := crypto.HMACSHA256Hex(tenantSalt, sub.Customer)
+	// Process subscriptions with synthetic ID generation
+	for _, sub := range rawSubscriptions {
+		modelSub, err := stripec.SanitizeSubscription(tenantSalt, sub)
 		if err != nil {
-			log.Printf("Warning: Failed to generate synthetic ID for customer %s: %v", sub.Customer, err)
+			log.Printf("Warning: Failed to sanitize subscription %s: %v", sub.ID, err)
 			continue
-		}
-
-		// Convert items
-		var items []models.SubItem
-		for _, item := range sub.Items {
-			items = append(items, models.SubItem{
-				PriceID:   item.PriceID,
-				ProductID: item.ProductID,
-				Quantity:  item.Quantity,
-			})
-		}
-
-		modelSub := models.Subscription{
-			ID:        sub.ID,
-			Customer:  models.SynStripeID(synCustomerID),
-			Status:    sub.Status,
-			Items:     items,
-			CreatedAt: sub.CreatedAt,
 		}
 		modelSubscriptions = append(modelSubscriptions, modelSub)
 	}
 
-	// Process invoices
-	for _, inv := range invoices {
-		// Generate synthetic customer ID
-		synCustomerID, err := crypto.HMACSHA256Hex(tenantSalt, inv.Customer)
+	// Process invoices with synthetic ID generation
+	for _, inv := range rawInvoices {
+		modelInv, err := stripec.SanitizeInvoice(tenantSalt, inv)
 		if err != nil {
-			log.Printf("Warning: Failed to generate synthetic ID for customer %s: %v", inv.Customer, err)
+			log.Printf("Warning: Failed to sanitize invoice %s: %v", inv.ID, err)
 			continue
-		}
-
-		modelInv := models.Invoice{
-			ID:           inv.ID,
-			Customer:     models.SynStripeID(synCustomerID),
-			Subscription: inv.Subscription,
-			Total:        inv.Total,
-			Currency:     inv.Currency,
-			Status:       inv.Status,
-			CreatedAt:    inv.CreatedAt,
-			Paid:         inv.Paid,
 		}
 		modelInvoices = append(modelInvoices, modelInv)
 	}

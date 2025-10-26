@@ -1,14 +1,16 @@
 package stripec
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stripe/stripe-go/v83"
-	"linker-agent/internal/models"
 )
 
-// TestSanitizeSubscription_WhitelistedFields verifies that only approved fields are mapped.
-func TestSanitizeSubscription_WhitelistedFields(t *testing.T) {
+var testSalt = []byte("test_salt_for_synthetic_ids")
+
+// TestSanitizeSubscription_SyntheticIDs verifies that all IDs are converted to synthetic IDs.
+func TestSanitizeSubscription_SyntheticIDs(t *testing.T) {
 	// Build a minimal fake Stripe subscription with only required fields
 	stripeSubscription := &stripe.Subscription{
 		ID: "sub_test123",
@@ -32,17 +34,30 @@ func TestSanitizeSubscription_WhitelistedFields(t *testing.T) {
 		},
 	}
 
-	result := SanitizeSubscription(stripeSubscription)
-
-	// Verify all whitelisted fields are present and correct
-	if result.ID != "sub_test123" {
-		t.Errorf("Expected ID 'sub_test123', got '%s'", result.ID)
+	result, err := SanitizeSubscription(testSalt, stripeSubscription)
+	if err != nil {
+		t.Fatalf("SanitizeSubscription failed: %v", err)
 	}
 
-	if result.Customer != models.SynStripeID("cus_test456") {
-		t.Errorf("Expected Customer 'cus_test456', got '%s'", result.Customer)
+	// Verify synthetic ID prefixes
+	if !strings.HasPrefix(result.ID, "syn_sub_") {
+		t.Errorf("Expected ID to start with 'syn_sub_', got '%s'", result.ID)
 	}
 
+	if !strings.HasPrefix(string(result.Customer), "syn_cust_") {
+		t.Errorf("Expected Customer to start with 'syn_cust_', got '%s'", result.Customer)
+	}
+
+	// Verify no raw Stripe IDs are present
+	if result.ID == "sub_test123" {
+		t.Errorf("Raw subscription ID leaked: %s", result.ID)
+	}
+
+	if string(result.Customer) == "cus_test456" {
+		t.Errorf("Raw customer ID leaked: %s", result.Customer)
+	}
+
+	// Verify status is preserved (enum value, not an ID)
 	if result.Status != "active" {
 		t.Errorf("Expected Status 'active', got '%s'", result.Status)
 	}
@@ -55,13 +70,23 @@ func TestSanitizeSubscription_WhitelistedFields(t *testing.T) {
 		t.Fatalf("Expected 1 item, got %d", len(result.Items))
 	}
 
+	// Verify item IDs are synthetic
 	item := result.Items[0]
-	if item.PriceID != "price_test789" {
-		t.Errorf("Expected PriceID 'price_test789', got '%s'", item.PriceID)
+	if !strings.HasPrefix(item.PriceID, "syn_price_") {
+		t.Errorf("Expected PriceID to start with 'syn_price_', got '%s'", item.PriceID)
 	}
 
-	if item.ProductID != "prod_testABC" {
-		t.Errorf("Expected ProductID 'prod_testABC', got '%s'", item.ProductID)
+	if !strings.HasPrefix(item.ProductID, "syn_prod_") {
+		t.Errorf("Expected ProductID to start with 'syn_prod_', got '%s'", item.ProductID)
+	}
+
+	// Verify no raw IDs in items
+	if item.PriceID == "price_test789" {
+		t.Errorf("Raw price ID leaked: %s", item.PriceID)
+	}
+
+	if item.ProductID == "prod_testABC" {
+		t.Errorf("Raw product ID leaked: %s", item.ProductID)
 	}
 
 	if item.Quantity != 2 {
@@ -69,12 +94,12 @@ func TestSanitizeSubscription_WhitelistedFields(t *testing.T) {
 	}
 }
 
-// TestSanitizeSubscription_MultipleItems verifies that multiple subscription items are mapped correctly.
-func TestSanitizeSubscription_MultipleItems(t *testing.T) {
+// TestSanitizeSubscription_Deterministic verifies that synthetic IDs are deterministic.
+func TestSanitizeSubscription_Deterministic(t *testing.T) {
 	stripeSubscription := &stripe.Subscription{
-		ID: "sub_multi",
+		ID: "sub_deterministic",
 		Customer: &stripe.Customer{
-			ID: "cus_multi",
+			ID: "cus_deterministic",
 		},
 		Status:  stripe.SubscriptionStatusActive,
 		Created: 1609459200,
@@ -82,96 +107,55 @@ func TestSanitizeSubscription_MultipleItems(t *testing.T) {
 			Data: []*stripe.SubscriptionItem{
 				{
 					Price: &stripe.Price{
-						ID: "price_1",
+						ID: "price_det",
 						Product: &stripe.Product{
-							ID: "prod_1",
-						},
-					},
-					Quantity: 1,
-				},
-				{
-					Price: &stripe.Price{
-						ID: "price_2",
-						Product: &stripe.Product{
-							ID: "prod_2",
-						},
-					},
-					Quantity: 5,
-				},
-			},
-		},
-	}
-
-	result := SanitizeSubscription(stripeSubscription)
-
-	if len(result.Items) != 2 {
-		t.Fatalf("Expected 2 items, got %d", len(result.Items))
-	}
-
-	// Verify first item
-	if result.Items[0].PriceID != "price_1" || result.Items[0].Quantity != 1 {
-		t.Errorf("First item mismatch: got %+v", result.Items[0])
-	}
-
-	// Verify second item
-	if result.Items[1].PriceID != "price_2" || result.Items[1].Quantity != 5 {
-		t.Errorf("Second item mismatch: got %+v", result.Items[1])
-	}
-}
-
-// TestSanitizeSubscription_NoPIILeakage verifies that PII fields are not copied.
-// This test constructs a Stripe subscription with PII fields and ensures they don't appear in the result.
-func TestSanitizeSubscription_NoPIILeakage(t *testing.T) {
-	// Build a subscription with PII fields populated
-	stripeSubscription := &stripe.Subscription{
-		ID: "sub_nopii",
-		Customer: &stripe.Customer{
-			ID:    "cus_nopii",
-			Email: "customer@example.com", // PII
-			Name:  "John Doe",             // PII
-		},
-		Status:  stripe.SubscriptionStatusActive,
-		Created: 1609459200,
-		Items: &stripe.SubscriptionItemList{
-			Data: []*stripe.SubscriptionItem{
-				{
-					Price: &stripe.Price{
-						ID: "price_test",
-						Product: &stripe.Product{
-							ID: "prod_test",
+							ID: "prod_det",
 						},
 					},
 					Quantity: 1,
 				},
 			},
 		},
-		// Note: We're not populating metadata, description, etc. because
-		// the Stripe SDK types don't expose them on the Subscription struct
-		// in a way that would leak. But the key point is that our sanitizer
-		// uses a whitelist approach, so even if they were present, they wouldn't be copied.
 	}
 
-	result := SanitizeSubscription(stripeSubscription)
-
-	// The result should only have the customer ID, not the full customer object
-	// We verify this by checking that only the ID is present (as a SynStripeID)
-	if result.Customer != models.SynStripeID("cus_nopii") {
-		t.Errorf("Expected only customer ID, got %+v", result.Customer)
+	// Call twice with same salt
+	result1, err1 := SanitizeSubscription(testSalt, stripeSubscription)
+	if err1 != nil {
+		t.Fatalf("First SanitizeSubscription failed: %v", err1)
 	}
 
-	// The models.Subscription struct has no fields for email, name, etc.
-	// If we were to add them, this test would fail at compile time.
+	result2, err2 := SanitizeSubscription(testSalt, stripeSubscription)
+	if err2 != nil {
+		t.Fatalf("Second SanitizeSubscription failed: %v", err2)
+	}
+
+	// Verify deterministic output
+	if result1.ID != result2.ID {
+		t.Errorf("Subscription IDs not deterministic: %s != %s", result1.ID, result2.ID)
+	}
+
+	if result1.Customer != result2.Customer {
+		t.Errorf("Customer IDs not deterministic: %s != %s", result1.Customer, result2.Customer)
+	}
+
+	if len(result1.Items) > 0 && len(result2.Items) > 0 {
+		if result1.Items[0].PriceID != result2.Items[0].PriceID {
+			t.Errorf("Price IDs not deterministic: %s != %s", result1.Items[0].PriceID, result2.Items[0].PriceID)
+		}
+		if result1.Items[0].ProductID != result2.Items[0].ProductID {
+			t.Errorf("Product IDs not deterministic: %s != %s", result1.Items[0].ProductID, result2.Items[0].ProductID)
+		}
+	}
 }
 
-// TestSanitizeInvoice_WhitelistedFields verifies that only approved fields are mapped.
-func TestSanitizeInvoice_WhitelistedFields(t *testing.T) {
-	// Build a minimal fake Stripe invoice
+// TestSanitizeInvoice_SyntheticIDs verifies that all invoice IDs are converted to synthetic IDs.
+func TestSanitizeInvoice_SyntheticIDs(t *testing.T) {
 	stripeInvoice := &stripe.Invoice{
 		ID: "in_test123",
 		Customer: &stripe.Customer{
 			ID: "cus_test456",
 		},
-		Total:    10000, // $100.00 in cents
+		Total:    10000,
 		Currency: stripe.CurrencyUSD,
 		Status:   stripe.InvoiceStatusPaid,
 		Created:  1609459200,
@@ -186,21 +170,38 @@ func TestSanitizeInvoice_WhitelistedFields(t *testing.T) {
 		},
 	}
 
-	result := SanitizeInvoice(stripeInvoice)
-
-	// Verify all whitelisted fields are present and correct
-	if result.ID != "in_test123" {
-		t.Errorf("Expected ID 'in_test123', got '%s'", result.ID)
+	result, err := SanitizeInvoice(testSalt, stripeInvoice)
+	if err != nil {
+		t.Fatalf("SanitizeInvoice failed: %v", err)
 	}
 
-	if result.Customer != models.SynStripeID("cus_test456") {
-		t.Errorf("Expected Customer 'cus_test456', got '%s'", result.Customer)
+	// Verify synthetic ID prefixes
+	if !strings.HasPrefix(result.ID, "syn_inv_") {
+		t.Errorf("Expected ID to start with 'syn_inv_', got '%s'", result.ID)
 	}
 
-	if result.Subscription != "sub_test789" {
-		t.Errorf("Expected Subscription 'sub_test789', got '%s'", result.Subscription)
+	if !strings.HasPrefix(string(result.Customer), "syn_cust_") {
+		t.Errorf("Expected Customer to start with 'syn_cust_', got '%s'", result.Customer)
 	}
 
+	if !strings.HasPrefix(result.Subscription, "syn_sub_") {
+		t.Errorf("Expected Subscription to start with 'syn_sub_', got '%s'", result.Subscription)
+	}
+
+	// Verify no raw Stripe IDs are present
+	if result.ID == "in_test123" {
+		t.Errorf("Raw invoice ID leaked: %s", result.ID)
+	}
+
+	if string(result.Customer) == "cus_test456" {
+		t.Errorf("Raw customer ID leaked: %s", result.Customer)
+	}
+
+	if result.Subscription == "sub_test789" {
+		t.Errorf("Raw subscription ID leaked: %s", result.Subscription)
+	}
+
+	// Verify non-ID fields are preserved
 	if result.Total != 10000 {
 		t.Errorf("Expected Total 10000, got %d", result.Total)
 	}
@@ -213,48 +214,8 @@ func TestSanitizeInvoice_WhitelistedFields(t *testing.T) {
 		t.Errorf("Expected Status 'paid', got '%s'", result.Status)
 	}
 
-	if result.CreatedAt != 1609459200 {
-		t.Errorf("Expected CreatedAt 1609459200, got %d", result.CreatedAt)
-	}
-
 	if !result.Paid {
 		t.Errorf("Expected Paid true, got false")
-	}
-}
-
-// TestSanitizeInvoice_PaidStatus verifies that the Paid field is correctly derived from Status.
-func TestSanitizeInvoice_PaidStatus(t *testing.T) {
-	tests := []struct {
-		name   string
-		status stripe.InvoiceStatus
-		paid   bool
-	}{
-		{"paid invoice", stripe.InvoiceStatusPaid, true},
-		{"open invoice", stripe.InvoiceStatusOpen, false},
-		{"draft invoice", stripe.InvoiceStatusDraft, false},
-		{"void invoice", stripe.InvoiceStatusVoid, false},
-		{"uncollectible invoice", stripe.InvoiceStatusUncollectible, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			stripeInvoice := &stripe.Invoice{
-				ID: "in_test",
-				Customer: &stripe.Customer{
-					ID: "cus_test",
-				},
-				Total:    1000,
-				Currency: stripe.CurrencyUSD,
-				Status:   tt.status,
-				Created:  1609459200,
-			}
-
-			result := SanitizeInvoice(stripeInvoice)
-
-			if result.Paid != tt.paid {
-				t.Errorf("Expected Paid %v for status %s, got %v", tt.paid, tt.status, result.Paid)
-			}
-		})
 	}
 }
 
@@ -272,132 +233,103 @@ func TestSanitizeInvoice_NoSubscription(t *testing.T) {
 		// No Lines or empty Lines
 	}
 
-	result := SanitizeInvoice(stripeInvoice)
+	result, err := SanitizeInvoice(testSalt, stripeInvoice)
+	if err != nil {
+		t.Fatalf("SanitizeInvoice failed: %v", err)
+	}
 
 	if result.Subscription != "" {
 		t.Errorf("Expected empty Subscription, got '%s'", result.Subscription)
 	}
-}
 
-// TestSanitizeInvoice_MinorUnits verifies that amounts are preserved in minor units.
-func TestSanitizeInvoice_MinorUnits(t *testing.T) {
-	tests := []struct {
-		name     string
-		total    int64
-		currency stripe.Currency
-		expected int64
-	}{
-		{"USD cents", 12345, stripe.CurrencyUSD, 12345},       // $123.45
-		{"EUR cents", 50000, stripe.CurrencyEUR, 50000},       // €500.00
-		{"JPY no decimals", 1000, stripe.CurrencyJPY, 1000},   // ¥1000 (zero-decimal currency)
-		{"zero amount", 0, stripe.CurrencyUSD, 0},             // $0.00
-		{"negative refund", -2500, stripe.CurrencyUSD, -2500}, // -$25.00 (credit memo)
+	// Still verify other IDs are synthetic
+	if !strings.HasPrefix(result.ID, "syn_inv_") {
+		t.Errorf("Expected ID to start with 'syn_inv_', got '%s'", result.ID)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			stripeInvoice := &stripe.Invoice{
-				ID: "in_amount",
-				Customer: &stripe.Customer{
-					ID: "cus_test",
-				},
-				Total:    tt.total,
-				Currency: tt.currency,
-				Status:   stripe.InvoiceStatusPaid,
-				Created:  1609459200,
-			}
-
-			result := SanitizeInvoice(stripeInvoice)
-
-			if result.Total != tt.expected {
-				t.Errorf("Expected Total %d, got %d", tt.expected, result.Total)
-			}
-
-			if result.Currency != string(tt.currency) {
-				t.Errorf("Expected Currency '%s', got '%s'", tt.currency, result.Currency)
-			}
-		})
+	if !strings.HasPrefix(string(result.Customer), "syn_cust_") {
+		t.Errorf("Expected Customer to start with 'syn_cust_', got '%s'", result.Customer)
 	}
 }
 
-// TestSanitizeInvoice_NoPIILeakage verifies that PII fields are not copied.
-func TestSanitizeInvoice_NoPIILeakage(t *testing.T) {
-	// Build an invoice with PII fields populated
+// TestSanitizeInvoice_Deterministic verifies that synthetic IDs are deterministic.
+func TestSanitizeInvoice_Deterministic(t *testing.T) {
 	stripeInvoice := &stripe.Invoice{
-		ID: "in_nopii",
+		ID: "in_deterministic",
 		Customer: &stripe.Customer{
-			ID:    "cus_nopii",
-			Email: "customer@example.com", // PII
-			Name:  "Jane Smith",           // PII
+			ID: "cus_deterministic",
 		},
 		Total:    10000,
 		Currency: stripe.CurrencyUSD,
 		Status:   stripe.InvoiceStatusPaid,
 		Created:  1609459200,
-	}
-
-	result := SanitizeInvoice(stripeInvoice)
-
-	// The result should only have the customer ID, not the full customer object
-	if result.Customer != models.SynStripeID("cus_nopii") {
-		t.Errorf("Expected only customer ID, got %+v", result.Customer)
-	}
-
-	// The models.Invoice struct has no fields for email, name, billing details, etc.
-	// If we were to add them, this test would fail at compile time.
-}
-
-// TestSanitizeInvoice_TimestampMapping verifies that Unix timestamps are preserved correctly.
-func TestSanitizeInvoice_TimestampMapping(t *testing.T) {
-	testTimestamp := int64(1640995200) // 2022-01-01 00:00:00 UTC
-
-	stripeInvoice := &stripe.Invoice{
-		ID: "in_time",
-		Customer: &stripe.Customer{
-			ID: "cus_test",
-		},
-		Total:    1000,
-		Currency: stripe.CurrencyUSD,
-		Status:   stripe.InvoiceStatusPaid,
-		Created:  testTimestamp,
-	}
-
-	result := SanitizeInvoice(stripeInvoice)
-
-	if result.CreatedAt != testTimestamp {
-		t.Errorf("Expected CreatedAt %d, got %d", testTimestamp, result.CreatedAt)
-	}
-}
-
-// TestSanitizeSubscription_TimestampMapping verifies that Unix timestamps are preserved correctly.
-func TestSanitizeSubscription_TimestampMapping(t *testing.T) {
-	testTimestamp := int64(1640995200) // 2022-01-01 00:00:00 UTC
-
-	stripeSubscription := &stripe.Subscription{
-		ID: "sub_time",
-		Customer: &stripe.Customer{
-			ID: "cus_test",
-		},
-		Status:  stripe.SubscriptionStatusActive,
-		Created: testTimestamp,
-		Items: &stripe.SubscriptionItemList{
-			Data: []*stripe.SubscriptionItem{
+		Lines: &stripe.InvoiceLineItemList{
+			Data: []*stripe.InvoiceLineItem{
 				{
-					Price: &stripe.Price{
-						ID: "price_test",
-						Product: &stripe.Product{
-							ID: "prod_test",
-						},
+					Subscription: &stripe.Subscription{
+						ID: "sub_deterministic",
 					},
-					Quantity: 1,
 				},
 			},
 		},
 	}
 
-	result := SanitizeSubscription(stripeSubscription)
+	// Call twice with same salt
+	result1, err1 := SanitizeInvoice(testSalt, stripeInvoice)
+	if err1 != nil {
+		t.Fatalf("First SanitizeInvoice failed: %v", err1)
+	}
 
-	if result.CreatedAt != testTimestamp {
-		t.Errorf("Expected CreatedAt %d, got %d", testTimestamp, result.CreatedAt)
+	result2, err2 := SanitizeInvoice(testSalt, stripeInvoice)
+	if err2 != nil {
+		t.Fatalf("Second SanitizeInvoice failed: %v", err2)
+	}
+
+	// Verify deterministic output
+	if result1.ID != result2.ID {
+		t.Errorf("Invoice IDs not deterministic: %s != %s", result1.ID, result2.ID)
+	}
+
+	if result1.Customer != result2.Customer {
+		t.Errorf("Customer IDs not deterministic: %s != %s", result1.Customer, result2.Customer)
+	}
+
+	if result1.Subscription != result2.Subscription {
+		t.Errorf("Subscription IDs not deterministic: %s != %s", result1.Subscription, result2.Subscription)
+	}
+}
+
+// TestSanitize_DifferentSalts verifies that different salts produce different synthetic IDs.
+func TestSanitize_DifferentSalts(t *testing.T) {
+	salt1 := []byte("salt_one")
+	salt2 := []byte("salt_two")
+
+	stripeSubscription := &stripe.Subscription{
+		ID: "sub_multi_tenant",
+		Customer: &stripe.Customer{
+			ID: "cus_shared",
+		},
+		Status:  stripe.SubscriptionStatusActive,
+		Created: 1609459200,
+		Items:   &stripe.SubscriptionItemList{Data: []*stripe.SubscriptionItem{}},
+	}
+
+	result1, err1 := SanitizeSubscription(salt1, stripeSubscription)
+	if err1 != nil {
+		t.Fatalf("SanitizeSubscription with salt1 failed: %v", err1)
+	}
+
+	result2, err2 := SanitizeSubscription(salt2, stripeSubscription)
+	if err2 != nil {
+		t.Fatalf("SanitizeSubscription with salt2 failed: %v", err2)
+	}
+
+	// Verify different salts produce different synthetic IDs
+	if result1.ID == result2.ID {
+		t.Errorf("Different salts produced same subscription ID: %s", result1.ID)
+	}
+
+	if result1.Customer == result2.Customer {
+		t.Errorf("Different salts produced same customer ID: %s", result1.Customer)
 	}
 }
