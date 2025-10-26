@@ -15,3 +15,15 @@ export:
   mode: "file"  # "http", "file", or "both"
   endpoint: "https://api.connektn.dev/ingest"
   filePath: "reports/exporter_output.jsonl"
+
+matchers:
+  recipe:
+    name: "default"
+    version: "v1"
+    weights:
+      deterministic_id: 1.0
+      temporal_proximity: 0.5
+      sku_overlap: 0.8
+    threshold: 0.8
+    temporalWindowSec: 3600   # 1 hour
+    skuOverlapMin: 0.5

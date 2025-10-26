@@ -44,12 +44,29 @@ type Export struct {
 	FilePath string `yaml:"filePath"` // Local file path (required if mode includes "file")
 }
 
+// MatcherRecipe defines the configuration for the ensemble matcher.
+// This includes weights for each matcher, acceptance threshold, and matcher-specific parameters.
+type MatcherRecipe struct {
+	Name              string             `yaml:"name"`              // Recipe name (e.g., "default")
+	Version           string             `yaml:"version"`           // Recipe version (e.g., "v1")
+	Weights           map[string]float64 `yaml:"weights"`           // Weights per matcher name
+	Threshold         float64            `yaml:"threshold"`         // Minimum combined score to accept an edge
+	TemporalWindowSec int64              `yaml:"temporalWindowSec"` // Time window in seconds for temporal matcher
+	SKUOverlapMin     float64            `yaml:"skuOverlapMin"`     // Minimum overlap score for SKU matcher
+}
+
+// Matchers configures the matcher framework behavior.
+type Matchers struct {
+	Recipe MatcherRecipe `yaml:"recipe"` // Ensemble recipe configuration
+}
+
 // Config is the root configuration structure.
 type Config struct {
-	Server  Server  `yaml:"server"`
-	Privacy Privacy `yaml:"privacy"`
-	Sources Sources `yaml:"sources"`
-	Export  Export  `yaml:"export"`
+	Server   Server   `yaml:"server"`
+	Privacy  Privacy  `yaml:"privacy"`
+	Sources  Sources  `yaml:"sources"`
+	Export   Export   `yaml:"export"`
+	Matchers Matchers `yaml:"matchers"` // Matcher framework configuration
 }
 
 // Load reads a YAML configuration file from the given path, resolves environment
@@ -159,6 +176,70 @@ func validate(cfg *Config) error {
 	if cfg.Export.Mode == "file" || cfg.Export.Mode == "both" {
 		if cfg.Export.FilePath == "" {
 			return fmt.Errorf("export.filePath must be set when mode is 'file' or 'both'")
+		}
+	}
+
+	// Validate matcher configuration
+	if err := validateMatcherRecipe(&cfg.Matchers.Recipe); err != nil {
+		return fmt.Errorf("matchers.recipe: %w", err)
+	}
+
+	return nil
+}
+
+// validateMatcherRecipe validates the matcher recipe configuration.
+func validateMatcherRecipe(recipe *MatcherRecipe) error {
+	// Set defaults if not specified
+	if recipe.Name == "" {
+		recipe.Name = "default"
+	}
+	if recipe.Version == "" {
+		recipe.Version = "v1"
+	}
+
+	// Default weights if not specified
+	if recipe.Weights == nil {
+		recipe.Weights = map[string]float64{
+			"deterministic_id":   1.0,
+			"temporal_proximity": 0.5,
+			"sku_overlap":        0.8,
+		}
+	}
+
+	// Default threshold
+	if recipe.Threshold == 0 {
+		recipe.Threshold = 0.8
+	}
+
+	// Default temporal window (1 hour)
+	if recipe.TemporalWindowSec == 0 {
+		recipe.TemporalWindowSec = 3600
+	}
+
+	// Default SKU overlap min
+	if recipe.SKUOverlapMin == 0 {
+		recipe.SKUOverlapMin = 0.5
+	}
+
+	// Validate threshold range
+	if recipe.Threshold < 0 || recipe.Threshold > 1 {
+		return fmt.Errorf("threshold must be in range [0, 1], got %.2f", recipe.Threshold)
+	}
+
+	// Validate temporal window
+	if recipe.TemporalWindowSec < 0 {
+		return fmt.Errorf("temporalWindowSec must be non-negative, got %d", recipe.TemporalWindowSec)
+	}
+
+	// Validate SKU overlap min
+	if recipe.SKUOverlapMin < 0 || recipe.SKUOverlapMin > 1 {
+		return fmt.Errorf("skuOverlapMin must be in range [0, 1], got %.2f", recipe.SKUOverlapMin)
+	}
+
+	// Validate weights (all must be non-negative)
+	for matcher, weight := range recipe.Weights {
+		if weight < 0 {
+			return fmt.Errorf("weight for matcher '%s' must be non-negative, got %.2f", matcher, weight)
 		}
 	}
 

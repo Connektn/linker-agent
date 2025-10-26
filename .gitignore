@@ -70,4 +70,4 @@ temp/
 *.pem
 *.key
 *.crt
-secrets/
+secrets/linker-agent

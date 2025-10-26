@@ -68,12 +68,13 @@ tenant-infra
 ├─ 🔒 Connektn Linker Agent (this service)
 │     ├── internal/config/           ← ✅ YAML + env var loader
 │     ├── internal/connectors/
-│     │     └─ stripe/               ← ✅ Read-only Stripe API client
+│     │     └─ stripe/               ← ✅ Read-only Stripe API client + Lite mappers
 │     ├── internal/crypto/           ← ✅ HMAC-SHA256 synthetic ID system
 │     ├── internal/models/           ← ✅ Privacy-safe data models
 │     ├── internal/exporter/         ← ✅ HTTP + file dual sink
-│     ├── internal/matchers/         ← 🚧 Coming soon
-│     └── main.go                    ← ✅ Entrypoint
+│     ├── internal/matchers/         ← ✅ Ensemble framework with 3 matchers
+│     ├── internal/pipeline/         ← ✅ Orchestrator + link edge generation
+│     └── main.go                    ← ✅ Entrypoint with matcher pipeline
 │
 └─ 🌐 Connektn Cloud (ingest API) OR local file
       └── receives only synthetic links + proofs
@@ -168,7 +169,57 @@ export:
   filePath: "reports/exporter_output.jsonl"
 ```
 
-### 6. Stripe Test Data Seeder (`scripts/seed_stripe_test_data.sh`)
+### 6. Matcher Framework (`internal/matchers/`)
+
+**Purpose:** Generate privacy-preserving link edges between usage events and billing data.
+
+**Features:**
+- **Ensemble architecture:** Combine multiple matchers with configurable weights
+- **Three matchers implemented:**
+  - `DeterministicIDMatcher`: Exact customer ID matches (HMAC-based)
+  - `TemporalMatcher`: Time-based correlation (usage near subscription/invoice creation)
+  - `SKUOverlapMatcher`: Product/price overlap analysis
+- **Confidence scoring:** Weighted combination with threshold filtering
+- **Cryptographic proofs:** Each link edge includes HMAC proof of its components
+- **Explainability:** Human-readable notes explain why each match was made
+
+**Key Types:**
+- `UsageEvent` — synthetic user ID, feature, SKU, timestamp
+- `SubscriptionLite` / `InvoiceLite` — minimal billing data for matching
+- `LinkEdge` — verified connection with confidence score and proof
+- `Ensemble` — orchestrates matchers and combines results
+
+**Example Link Edge:**
+```json
+{
+  "From": "syn_cust_6a95702fc4e99e2b",
+  "To": "syn_sub_af93a5b01e0deff7",
+  "Kind": "user->subscription",
+  "Confidence": 1.0,
+  "Proof": "89db5647058126bb5c772ec147bf000ac3b1bff395f5ad854c5779c7ac488159",
+  "Recipe": "default/v1",
+  "At": 1761425330,
+  "Notes": "exact customer ID match; usage within 240s of subscription creation"
+}
+```
+
+### 7. Pipeline Orchestrator (`internal/pipeline/`)
+
+**Purpose:** End-to-end workflow from data fetching to link edge export.
+
+**Features:**
+- Input validation (ensures all IDs are synthetic)
+- Runs all matchers in ensemble
+- Combines and filters edges by confidence threshold
+- Generates detailed statistics
+- Exports link edges to separate file/endpoint from billing data
+
+**Key Function:**
+```go
+Run(ctx, ensemble, exporter, Inputs{usages, subs, invs}) -> Result
+```
+
+### 8. Stripe Test Data Seeder (`scripts/seed_stripe_test_data.sh`)
 
 **Purpose:** Automated generation of realistic Stripe test data for development and testing.
 
@@ -205,7 +256,7 @@ bash scripts/seed_stripe_test_data.sh
 
 ## ⚙️ Implemented Features
 
-### ✅ Current Release (v0.2-alpha)
+### ✅ Current Release (v0.3-alpha)
 
 - 🔐 **Zero-PII Architecture:** All identifiers converted to HMAC-SHA256 synthetic IDs
 - 🆔 **Synthetic ID System:** Tenant-scoped anonymization for ALL entities:
@@ -220,17 +271,24 @@ bash scripts/seed_stripe_test_data.sh
   - HTTP mode: batched payloads to Connektn Cloud
   - File mode: JSONL locally for testing
   - Both mode: simultaneous HTTP + file export
+  - **Separate endpoints:** billing data → `/ingest`, link edges → `/ingest/edges`
+- 🧠 **Matcher Framework:** Ensemble with 3 matchers
+  - DeterministicIDMatcher (exact HMAC joins)
+  - TemporalMatcher (time-based correlation)
+  - SKUOverlapMatcher (product/price overlap)
+- 🔗 **Link Edge Generation:** Privacy-preserving relationships with cryptographic proofs
+- 📊 **Pipeline Orchestrator:** End-to-end workflow with statistics
 - ⚡ **Retry Logic:** Exponential backoff with idempotency keys
 - 🧪 **Test Data Seeder:** `seed_stripe_test_data.sh` for realistic test data
-- ✅ **Comprehensive Tests:** Unit tests for crypto, sanitizers, exporter
+- ✅ **Comprehensive Tests:** Unit tests for crypto, sanitizers, exporter, matchers, pipeline
 
 ### 🚧 Roadmap (Coming Soon)
 
-- 🧠 **Matchers:** HMAC joins, temporal proximity, SKU overlap, behavioral similarity
-- 🧾 **Proof-of-Truth:** Cryptographic proof generation for each match
+- 🧠 **Advanced Matchers:** Behavioral similarity, fuzzy matching
 - ⚙️ **Additional Connectors:** Snowflake, BigQuery, Postgres, PostHog
 - 📊 **OpenTelemetry:** Metrics and tracing
 - 🐳 **Docker Image:** Production-ready container
+- ☸️ **Helm Chart:** Kubernetes deployment
 
 ---
 
@@ -272,6 +330,18 @@ export:
   mode: "both"                       # "http" | "file" | "both"
   endpoint: "https://api.connektn.dev/ingest"
   filePath: "reports/exporter_output.jsonl"
+
+matchers:
+  recipe:
+    name: "default"
+    version: "v1"
+    weights:
+      deterministic_id: 1.0
+      temporal_proximity: 0.5
+      sku_overlap: 0.8
+    threshold: 0.8                   # Minimum confidence to accept edge
+    temporalWindowSec: 3600          # 1 hour correlation window
+    skuOverlapMin: 0.5               # Minimum SKU overlap ratio
 ```
 
 **Export Modes:**
@@ -279,6 +349,13 @@ export:
 - **`mode: "http"`** - Export to Connektn Cloud API only
 - **`mode: "file"`** - Export to local JSONL file only (useful for testing)
 - **`mode: "both"`** - Export to both HTTP and file simultaneously
+
+**Matcher Configuration:**
+
+- **`weights`**: Contribution of each matcher to final confidence score
+- **`threshold`**: Edges below this confidence are filtered out (0.0-1.0)
+- **`temporalWindowSec`**: Max time gap between usage and billing event
+- **`skuOverlapMin`**: Minimum ratio of matching SKUs required
 
 ### 3. Seed Stripe Test Data (Optional)
 
@@ -314,7 +391,7 @@ export STRIPE_API_KEY=sk_test_xxxxx
 export TENANT_SALT=$(openssl rand -hex 32)  # Generate secure random salt
 ```
 
-### 5. Run the Agent
+### 5. Run the Matcher Pipeline
 
 ```bash
 go run main.go
@@ -323,32 +400,74 @@ go run main.go
 **Expected Output:**
 
 ```
-2025/10/25 23:12:07 Configuration loaded successfully
-2025/10/25 23:12:07 Privacy mode: strict
-2025/10/25 23:12:07 Stripe client initialized
-2025/10/25 23:12:08 Stripe smoke check passed: found 50 customers
-2025/10/25 23:12:08 Exporter initialized (mode: both)
-2025/10/25 23:12:08 Fetching subscriptions from Stripe...
-2025/10/25 23:12:09 Retrieved 50 subscriptions
-2025/10/25 23:12:09 Fetching invoices from Stripe...
-2025/10/25 23:12:13 Retrieved 50 invoices
-2025/10/25 23:12:13 Processed 50 subscriptions with synthetic IDs
-2025/10/25 23:12:13 Processed 50 invoices with synthetic IDs
-2025/10/25 23:12:13 Enqueued 100 items total
-✅ Exporter run finished — output captured in reports/exporter_output.jsonl
+2025/10/26 07:39:43 Configuration loaded successfully
+2025/10/26 07:39:43 Privacy mode: strict
+2025/10/26 07:39:43 === Running Matcher Pipeline ===
+2025/10/26 07:39:43 Stripe client initialized
+2025/10/26 07:39:43 Link edges will be exported to file: reports/link_edges.jsonl
+2025/10/26 07:39:43 Fetching subscriptions from Stripe...
+2025/10/26 07:39:45 Retrieved 94 subscriptions
+2025/10/26 07:39:45 Fetching invoices from Stripe...
+2025/10/26 07:39:48 Retrieved 94 invoices
+2025/10/26 07:39:48 Sanitized 94 subscriptions and 94 invoices
+2025/10/26 07:39:48 Billing data will be exported to file: reports/exporter_output.jsonl
+2025/10/26 07:39:50 Exported 188 billing records to reports/exporter_output.jsonl
+2025/10/26 07:39:50 Generated 10 usage events
+2025/10/26 07:39:50 Ensemble configured: default/v1 (threshold: 0.80)
+2025/10/26 07:39:50 Running matcher pipeline...
+
+=== Pipeline Results ===
+Usage events:    10
+Subscriptions:   94
+Invoices:        94
+Raw edges:       2122
+Accepted edges:  68
+  High conf:     68 (≥0.9)
+  Medium conf:   0 (0.6-0.9)
+  Low conf:      0 (<0.6)
+Exported edges:  68
+
+Per-matcher edge counts:
+  deterministic_id: 30
+  temporal_proximity: 1880
+  sku_overlap: 212
+
+✅ Pipeline run complete
+   • Billing data: reports/exporter_output.jsonl
+   • Link edges:   reports/link_edges.jsonl
+```
+
+**Legacy Mode (Export Billing Only):**
+
+If you want to skip matchers and only export billing data:
+```bash
+go run main.go --export-billing-only
 ```
 
 ### 6. Verify Exported Data
 
+**Billing Data:**
 ```bash
-# Count exported items
+# Count billing records
 cat reports/exporter_output.jsonl | jq -s 'flatten | length'
 
 # View sample subscription (all IDs are synthetic)
 cat reports/exporter_output.jsonl | jq -s 'flatten | .[0]'
 ```
 
-**Sample Output:**
+**Link Edges:**
+```bash
+# Count total edges
+cat reports/link_edges.jsonl | jq 'if type == "array" then length else 1 end' | awk '{sum+=$1} END {print sum}'
+
+# View sample edge
+cat reports/link_edges.jsonl | jq -s 'flatten | .[0]'
+
+# Count edges by type
+cat reports/link_edges.jsonl | jq -r 'if type == "array" then .[] else . end | .Kind' | sort | uniq -c
+```
+
+**Sample Billing Data:**
 
 ```json
 {
@@ -363,6 +482,21 @@ cat reports/exporter_output.jsonl | jq -s 'flatten | .[0]'
     }
   ],
   "created_at": 1761424864
+}
+```
+
+**Sample Link Edge:**
+
+```json
+{
+  "From": "syn_cust_6a95702fc4e99e2b",
+  "To": "syn_sub_af93a5b01e0deff7",
+  "Kind": "user->subscription",
+  "Confidence": 1.0,
+  "Proof": "89db5647058126bb5c772ec147bf000ac3b1bff395f5ad854c5779c7ac488159",
+  "Recipe": "default/v1",
+  "At": 1761425330,
+  "Notes": "SKU matched subscription price; exact customer ID match; usage within 240s of subscription creation"
 }
 ```
 
@@ -475,7 +609,7 @@ openssl rand -hex 32
 
 ```
 linker-agent/
-├── main.go                        # Entrypoint
+├── main.go                        # Entrypoint with matcher pipeline
 ├── config.yaml                    # Configuration file
 ├── internal/
 │   ├── config/                    # YAML + env loader
@@ -485,6 +619,7 @@ linker-agent/
 │   │   └── stripe/                # Stripe API connector
 │   │       ├── stripe.go          # Client + rate limiting
 │   │       ├── sanitize.go        # ID sanitization
+│   │       ├── to_lite.go         # Stripe → Lite mappers
 │   │       ├── sanitize_test.go   # Sanitizer tests
 │   │       └── stripe_test.go     # Client tests
 │   ├── crypto/
@@ -493,10 +628,22 @@ linker-agent/
 │   │   └── hmac_test.go           # Crypto tests
 │   ├── models/
 │   │   └── models.go              # Privacy-safe models
+│   ├── matchers/                  # Matcher framework
+│   │   ├── matcher.go             # Interface + ensemble
+│   │   ├── deterministic.go       # HMAC exact ID matcher
+│   │   ├── temporal.go            # Time-based correlation
+│   │   ├── sku_overlap.go         # Product/price overlap
+│   │   └── *_test.go              # Matcher tests
+│   ├── pipeline/                  # Pipeline orchestrator
+│   │   ├── pipeline.go            # Main orchestration logic
+│   │   └── pipeline_test.go       # Pipeline tests
 │   └── exporter/
 │       ├── exporter.go            # Dual sink exporter
 │       ├── exporter_test.go       # Exporter tests
 │       └── queue.go               # Buffered queue
+├── prompts/                       # Implementation specs
+│   ├── matcher-framework.md
+│   └── wire-matcher-pipeline.md
 └── scripts/
     └── seed_stripe_test_data.sh   # Test data generator
 ```
@@ -598,33 +745,39 @@ Apache License 2.0 — see [`LICENSE`](LICENSE).
 
 ## 🧭 Current Status & Roadmap
 
-### ✅ v0.2-alpha (Current)
+### ✅ v0.3-alpha (Current)
 
 - [x] Configuration loader with env var support
 - [x] Stripe connector (customers, subscriptions, invoices)
 - [x] **Synthetic ID system for ALL entities**
 - [x] HMAC-SHA256 cryptographic hashing
 - [x] Dual sink exporter (HTTP + file)
+- [x] **Matcher framework with ensemble architecture**
+- [x] **DeterministicIDMatcher** (HMAC exact joins)
+- [x] **TemporalMatcher** (time-based correlation)
+- [x] **SKUOverlapMatcher** (product/price overlap)
+- [x] **Pipeline orchestrator** (end-to-end workflow)
+- [x] **Link edge generation** with cryptographic proofs
 - [x] Retry logic with exponential backoff
 - [x] Test data seeder script
 - [x] Privacy verification tooling
-- [x] Comprehensive test coverage
+- [x] Comprehensive test coverage (crypto, matchers, pipeline)
 
-### 🚧 v0.3 (Next)
+### 🚧 v0.4 (Next)
 
-- [ ] HMAC matcher implementation
-- [ ] Temporal proximity matcher
+- [ ] Behavioral similarity matcher (cosine similarity)
 - [ ] Postgres connector
-- [ ] OpenTelemetry metrics
+- [ ] OpenTelemetry metrics and tracing
 - [ ] Docker image + Helm chart
+- [ ] Real usage data connectors (warehouse/analytics)
 
-### 📅 v0.4+
+### 📅 v0.5+
 
 - [ ] BigQuery connector
 - [ ] Snowflake connector
-- [ ] SKU overlap matcher
-- [ ] Behavioral similarity matcher
-- [ ] Web UI for match review
+- [ ] PostHog connector
+- [ ] Advanced fuzzy matching
+- [ ] Web UI for match review and debugging
 
 ---
 
