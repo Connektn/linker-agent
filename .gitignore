@@ -71,3 +71,4 @@ temp/
 *.key
 *.crt
 secrets/linker-agent
+linker-agent

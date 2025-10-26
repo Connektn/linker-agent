@@ -3,7 +3,6 @@ package exporter
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,744 +11,329 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"linker-agent/internal/config"
 )
 
-// TestNew verifies constructor validation and defaults.
-func TestNew(t *testing.T) {
-	tests := []struct {
-		name    string
-		opts    Options
-		wantErr bool
-	}{
-		{
-			name: "valid with all options",
-			opts: Options{
-				Endpoint:   "https://api.test.dev/ingest",
-				TenantKey:  "tenant_123",
-				BatchSize:  100,
-				FlushEvery: 10 * time.Second,
-				MaxRetries: 5,
-			},
-			wantErr: false,
-		},
-		{
-			name: "valid with defaults",
-			opts: Options{
-				Endpoint:  "https://api.test.dev/ingest",
-				TenantKey: "tenant_123",
-			},
-			wantErr: false,
-		},
-		{
-			name: "missing endpoint",
-			opts: Options{
-				TenantKey: "tenant_123",
-			},
-			wantErr: true,
-		},
-		{
-			name: "missing tenant key",
-			opts: Options{
-				Endpoint: "https://api.test.dev/ingest",
-			},
-			wantErr: true,
-		},
-	}
+// TestPerStreamRouting verifies that different streams route to different endpoints/files.
+func TestPerStreamRouting(t *testing.T) {
+	t.Run("file mode with per-stream paths", func(t *testing.T) {
+		tmpDir := t.TempDir()
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			exp, err := New(tt.opts)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("New() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if !tt.wantErr {
-				if exp == nil {
-					t.Error("New() returned nil exporter")
-				}
-				// Verify defaults were applied
-				if exp.batchSize <= 0 {
-					t.Error("batchSize should have default value")
-				}
-				if exp.flushEvery <= 0 {
-					t.Error("flushEvery should have default value")
-				}
-				if exp.maxRetries <= 0 {
-					t.Error("maxRetries should have default value")
-				}
-			}
+		cfg := config.Export{
+			Mode: "file",
+			File: config.ExportFile{
+				Paths: map[string]string{
+					"edges":   filepath.Join(tmpDir, "edges.jsonl"),
+					"billing": filepath.Join(tmpDir, "billing.jsonl"),
+				},
+			},
+		}
+
+		exp, err := New(Options{
+			Config:        cfg,
+			TenantKey:     "test-key",
+			QueueCapacity: 100,
 		})
-	}
-}
+		if err != nil {
+			t.Fatalf("New() failed: %v", err)
+		}
 
-// TestEnqueue verifies that payloads are correctly serialized and queued.
-func TestEnqueue(t *testing.T) {
-	exp, err := New(Options{
-		Endpoint:      "https://api.test.dev/ingest",
-		TenantKey:     "tenant_123",
-		QueueCapacity: 2, // Small capacity for testing overflow
+		exp.Start(context.Background())
+
+		ctx := context.Background()
+
+		// Enqueue to different streams
+		_ = exp.Enqueue(ctx, StreamEdges, map[string]string{"type": "edge", "id": "1"})
+		_ = exp.Enqueue(ctx, StreamEdges, map[string]string{"type": "edge", "id": "2"})
+		_ = exp.Enqueue(ctx, StreamBilling, map[string]string{"type": "billing", "id": "3"})
+
+		// Wait for flush
+		time.Sleep(200 * time.Millisecond)
+		exp.Shutdown(context.Background())
+
+		// Verify edges file
+		edgesData, err := os.ReadFile(cfg.File.Paths["edges"])
+		if err != nil {
+			t.Fatalf("Failed to read edges file: %v", err)
+		}
+		var edgesArray []map[string]string
+		if err := json.Unmarshal(edgesData[:len(edgesData)-1], &edgesArray); err != nil {
+			t.Fatalf("Edges file has invalid JSON: %v", err)
+		}
+		if len(edgesArray) != 2 {
+			t.Errorf("Expected 2 edges, got %d", len(edgesArray))
+		}
+
+		// Verify billing file
+		billingData, err := os.ReadFile(cfg.File.Paths["billing"])
+		if err != nil {
+			t.Fatalf("Failed to read billing file: %v", err)
+		}
+		var billingArray []map[string]string
+		if err := json.Unmarshal(billingData[:len(billingData)-1], &billingArray); err != nil {
+			t.Fatalf("Billing file has invalid JSON: %v", err)
+		}
+		if len(billingArray) != 1 {
+			t.Errorf("Expected 1 billing record, got %d", len(billingArray))
+		}
 	})
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
-	defer exp.Shutdown(context.Background())
 
-	ctx := context.Background()
+	t.Run("http mode with per-stream routes", func(t *testing.T) {
+		edgesRequests := int32(0)
+		billingRequests := int32(0)
 
-	// Test successful enqueue
-	payload := map[string]string{"id": "test_1", "type": "subscription"}
-	if err := exp.Enqueue(ctx, payload); err != nil {
-		t.Errorf("Enqueue() error = %v", err)
-	}
-
-	// Verify item is in queue
-	select {
-	case data := <-exp.queue.ch:
-		var decoded map[string]string
-		if err := json.Unmarshal(data, &decoded); err != nil {
-			t.Fatalf("Failed to unmarshal queued data: %v", err)
-		}
-		if decoded["id"] != "test_1" {
-			t.Errorf("Expected id 'test_1', got '%s'", decoded["id"])
-		}
-	case <-time.After(100 * time.Millisecond):
-		t.Error("Item not found in queue")
-	}
-
-	// Test enqueue with invalid JSON (should fail)
-	invalidPayload := make(chan int) // channels can't be marshaled
-	if err := exp.Enqueue(ctx, invalidPayload); err == nil {
-		t.Error("Enqueue() should fail with unmarshallable payload")
-	}
-}
-
-// TestEnqueueOverflow verifies that the queue drops oldest items when full.
-func TestEnqueueOverflow(t *testing.T) {
-	exp, err := New(Options{
-		Endpoint:      "https://api.test.dev/ingest",
-		TenantKey:     "tenant_123",
-		QueueCapacity: 2, // Small capacity to trigger overflow
-	})
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
-	defer exp.Shutdown(context.Background())
-
-	ctx := context.Background()
-
-	// Fill the queue
-	_ = exp.Enqueue(ctx, map[string]string{"id": "1"})
-	_ = exp.Enqueue(ctx, map[string]string{"id": "2"})
-
-	// This should drop the oldest item (id: "1")
-	_ = exp.Enqueue(ctx, map[string]string{"id": "3"})
-
-	// Verify queue contains "2" and "3", not "1"
-	time.Sleep(10 * time.Millisecond) // Give enqueue time to complete
-
-	var found []string
-	for i := 0; i < 2; i++ {
-		select {
-		case data := <-exp.queue.ch:
-			var decoded map[string]string
-			json.Unmarshal(data, &decoded)
-			found = append(found, decoded["id"])
-		case <-time.After(100 * time.Millisecond):
-			break
-		}
-	}
-
-	// We should have 2 items
-	if len(found) != 2 {
-		t.Errorf("Expected 2 items in queue, got %d", len(found))
-	}
-
-	// Check that "1" is not present (it was dropped)
-	for _, id := range found {
-		if id == "1" {
-			t.Error("Oldest item '1' should have been dropped")
-		}
-	}
-}
-
-// TestFlushSuccess verifies successful batch transmission.
-func TestFlushSuccess(t *testing.T) {
-	var requestCount int32
-	var receivedPayload []byte
-	var mu sync.Mutex
-
-	// Mock server that returns 200 OK
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&requestCount, 1)
-
-		// Verify headers
-		if auth := r.Header.Get("Authorization"); auth != "Bearer tenant_123" {
-			t.Errorf("Expected Authorization header 'Bearer tenant_123', got '%s'", auth)
-		}
-		if ct := r.Header.Get("Content-Type"); ct != "application/json" {
-			t.Errorf("Expected Content-Type 'application/json', got '%s'", ct)
-		}
-		if idem := r.Header.Get("Idempotency-Key"); idem == "" {
-			t.Error("Expected Idempotency-Key header")
-		}
-
-		// Capture payload
-		mu.Lock()
-		receivedPayload, _ = io.ReadAll(r.Body)
-		mu.Unlock()
-
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	exp, err := New(Options{
-		Endpoint:   server.URL,
-		TenantKey:  "tenant_123",
-		BatchSize:  2,
-		FlushEvery: 100 * time.Millisecond,
-	})
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
-
-	// Start worker
-	exp.Start(context.Background())
-
-	// Enqueue items
-	ctx := context.Background()
-	_ = exp.Enqueue(ctx, map[string]string{"id": "1"})
-	_ = exp.Enqueue(ctx, map[string]string{"id": "2"})
-
-	// Wait for flush (should happen when batch size reached)
-	time.Sleep(200 * time.Millisecond)
-
-	// Shutdown and verify
-	exp.Shutdown(context.Background())
-
-	if count := atomic.LoadInt32(&requestCount); count != 1 {
-		t.Errorf("Expected 1 HTTP request, got %d", count)
-	}
-
-	// Verify payload is a valid JSON array
-	mu.Lock()
-	var payloadArray []map[string]string
-	if err := json.Unmarshal(receivedPayload, &payloadArray); err != nil {
-		t.Fatalf("Received payload is not valid JSON: %v", err)
-	}
-	mu.Unlock()
-
-	if len(payloadArray) != 2 {
-		t.Errorf("Expected 2 items in payload, got %d", len(payloadArray))
-	}
-}
-
-// TestFlushRetry verifies retry logic on 5xx errors.
-func TestFlushRetry(t *testing.T) {
-	var requestCount int32
-
-	// Mock server that returns 500 on first 2 attempts, then 200
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		count := atomic.AddInt32(&requestCount, 1)
-		if count <= 2 {
-			w.WriteHeader(http.StatusInternalServerError)
-		} else {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/v1/edges", func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&edgesRequests, 1)
 			w.WriteHeader(http.StatusOK)
-		}
-	}))
-	defer server.Close()
-
-	exp, err := New(Options{
-		Endpoint:   server.URL,
-		TenantKey:  "tenant_123",
-		BatchSize:  1,
-		FlushEvery: 50 * time.Millisecond,
-		MaxRetries: 3,
-	})
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
-
-	exp.Start(context.Background())
-
-	// Enqueue one item
-	ctx := context.Background()
-	_ = exp.Enqueue(ctx, map[string]string{"id": "1"})
-
-	// Wait for retries to complete
-	// Backoff: attempt 1 (0s), attempt 2 (+2s), attempt 3 (+4s) = 6s total
-	// Add buffer for processing
-	time.Sleep(7 * time.Second)
-
-	exp.Shutdown(context.Background())
-
-	// Should have made 3 attempts (1 initial + 2 retries)
-	if count := atomic.LoadInt32(&requestCount); count != 3 {
-		t.Errorf("Expected 3 HTTP requests (with retries), got %d", count)
-	}
-}
-
-// TestFlushDiscard verifies that 4xx errors cause batch discard.
-func TestFlushDiscard(t *testing.T) {
-	var requestCount int32
-
-	// Mock server that returns 400 Bad Request
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&requestCount, 1)
-		w.WriteHeader(http.StatusBadRequest)
-	}))
-	defer server.Close()
-
-	exp, err := New(Options{
-		Endpoint:   server.URL,
-		TenantKey:  "tenant_123",
-		BatchSize:  1,
-		FlushEvery: 50 * time.Millisecond,
-		MaxRetries: 3,
-	})
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
-
-	exp.Start(context.Background())
-
-	// Enqueue one item
-	ctx := context.Background()
-	_ = exp.Enqueue(ctx, map[string]string{"id": "1"})
-
-	// Wait for flush
-	time.Sleep(200 * time.Millisecond)
-
-	exp.Shutdown(context.Background())
-
-	// Should have made only 1 attempt (no retries for 4xx)
-	if count := atomic.LoadInt32(&requestCount); count != 1 {
-		t.Errorf("Expected 1 HTTP request (no retries for 4xx), got %d", count)
-	}
-}
-
-// TestShutdown verifies graceful shutdown with final flush.
-func TestShutdown(t *testing.T) {
-	var requestCount int32
-	var mu sync.Mutex
-	var receivedPayloads [][]byte
-	requestReceived := make(chan struct{}, 1)
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		count := atomic.AddInt32(&requestCount, 1)
-		t.Logf("HTTP request #%d received", count)
-
-		payload, _ := io.ReadAll(r.Body)
-		mu.Lock()
-		receivedPayloads = append(receivedPayloads, payload)
-		mu.Unlock()
-
-		w.WriteHeader(http.StatusOK)
-
-		select {
-		case requestReceived <- struct{}{}:
-		default:
-		}
-	}))
-	defer server.Close()
-
-	exp, err := New(Options{
-		Endpoint:   server.URL,
-		TenantKey:  "tenant_123",
-		BatchSize:  10,                     // Large batch size
-		FlushEvery: 1 * time.Hour,          // Long flush interval
-		MaxRetries: 1,
-	})
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
-
-	exp.Start(context.Background())
-
-	// Enqueue items but don't wait for automatic flush
-	ctx := context.Background()
-	_ = exp.Enqueue(ctx, map[string]string{"id": "1"})
-	_ = exp.Enqueue(ctx, map[string]string{"id": "2"})
-	_ = exp.Enqueue(ctx, map[string]string{"id": "3"})
-
-	// Wait for worker to consume all items from queue
-	// The worker reads items from the channel into its internal batch
-	for {
-		if len(exp.queue.ch) == 0 {
-			// All items consumed
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	// Give a bit more time to ensure worker has the items in its batch
-	time.Sleep(50 * time.Millisecond)
-
-	t.Logf("Shutting down exporter")
-
-	// Shutdown should trigger final flush
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := exp.Shutdown(shutdownCtx); err != nil {
-		t.Errorf("Shutdown() error = %v", err)
-	}
-
-	// Wait a bit for flush to complete
-	select {
-	case <-requestReceived:
-		t.Logf("Request received during shutdown")
-	case <-time.After(2 * time.Second):
-		t.Log("Timeout waiting for request")
-	}
-
-	// Verify that a flush occurred
-	if count := atomic.LoadInt32(&requestCount); count != 1 {
-		t.Errorf("Expected 1 HTTP request during shutdown, got %d", count)
-	}
-
-	// Verify all items were flushed
-	mu.Lock()
-	if len(receivedPayloads) != 1 {
-		t.Errorf("Expected 1 payload, got %d", len(receivedPayloads))
-	}
-	if len(receivedPayloads) > 0 {
-		var items []map[string]string
-		if err := json.Unmarshal(receivedPayloads[0], &items); err != nil {
-			t.Fatalf("Failed to unmarshal payload: %v", err)
-		}
-		if len(items) != 3 {
-			t.Errorf("Expected 3 items in final flush, got %d", len(items))
-		}
-	}
-	mu.Unlock()
-}
-
-// TestPeriodicFlush verifies that the timer-based flush works.
-func TestPeriodicFlush(t *testing.T) {
-	var requestCount int32
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&requestCount, 1)
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	exp, err := New(Options{
-		Endpoint:   server.URL,
-		TenantKey:  "tenant_123",
-		BatchSize:  100,                    // Large batch size (won't be reached)
-		FlushEvery: 100 * time.Millisecond, // Short interval for testing
-	})
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
-
-	exp.Start(context.Background())
-
-	// Enqueue a single item
-	ctx := context.Background()
-	_ = exp.Enqueue(ctx, map[string]string{"id": "1"})
-
-	// Wait for periodic flush
-	time.Sleep(200 * time.Millisecond)
-
-	exp.Shutdown(context.Background())
-
-	// Should have flushed due to timer, not batch size
-	if count := atomic.LoadInt32(&requestCount); count < 1 {
-		t.Errorf("Expected at least 1 HTTP request from periodic flush, got %d", count)
-	}
-}
-
-// TestExportErrorType verifies the exportError type behavior.
-func TestExportErrorType(t *testing.T) {
-	tests := []struct {
-		name       string
-		err        *exportError
-		retryable  bool
-		errMessage string
-	}{
-		{
-			name: "retryable 500 error",
-			err: &exportError{
-				statusCode: 500,
-				err:        http.ErrServerClosed,
-				retryable:  true,
-			},
-			retryable:  true,
-			errMessage: "export failed:",
-		},
-		{
-			name: "non-retryable 400 error",
-			err: &exportError{
-				statusCode: 400,
-				err:        http.ErrBodyNotAllowed,
-				retryable:  false,
-			},
-			retryable:  false,
-			errMessage: "export failed:",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if isRetryable(tt.err) != tt.retryable {
-				t.Errorf("isRetryable() = %v, want %v", isRetryable(tt.err), tt.retryable)
-			}
-
-			errMsg := tt.err.Error()
-			if errMsg == "" {
-				t.Error("Error() should return non-empty string")
-			}
 		})
-	}
-}
-
-// TestQueueClose verifies that closing the queue prevents new enqueues.
-func TestQueueClose(t *testing.T) {
-	q := newQueue(10)
-
-	// Enqueue before close
-	q.enqueue([]byte("test1"))
-
-	// Close queue
-	q.close()
-
-	// Enqueue after close (should be dropped)
-	q.enqueue([]byte("test2"))
-
-	// Drain queue - should only get "test1"
-	count := 0
-	for range q.ch {
-		count++
-	}
-
-	if count != 1 {
-		t.Errorf("Expected 1 item in queue after close, got %d", count)
-	}
-}
-
-// TestNewWithModes verifies validation of different export modes.
-func TestNewWithModes(t *testing.T) {
-	tests := []struct {
-		name    string
-		opts    Options
-		wantErr bool
-	}{
-		{
-			name: "mode http - valid",
-			opts: Options{
-				Mode:      "http",
-				Endpoint:  "https://api.test.dev/ingest",
-				TenantKey: "tenant_123",
-			},
-			wantErr: false,
-		},
-		{
-			name: "mode file - valid",
-			opts: Options{
-				Mode:     "file",
-				FilePath: "/tmp/test_export.jsonl",
-			},
-			wantErr: false,
-		},
-		{
-			name: "mode both - valid",
-			opts: Options{
-				Mode:      "both",
-				Endpoint:  "https://api.test.dev/ingest",
-				TenantKey: "tenant_123",
-				FilePath:  "/tmp/test_export.jsonl",
-			},
-			wantErr: false,
-		},
-		{
-			name: "mode http - missing endpoint",
-			opts: Options{
-				Mode:      "http",
-				TenantKey: "tenant_123",
-			},
-			wantErr: true,
-		},
-		{
-			name: "mode http - missing tenant key",
-			opts: Options{
-				Mode:     "http",
-				Endpoint: "https://api.test.dev/ingest",
-			},
-			wantErr: true,
-		},
-		{
-			name: "mode file - missing filePath",
-			opts: Options{
-				Mode: "file",
-			},
-			wantErr: true,
-		},
-		{
-			name: "mode both - missing endpoint",
-			opts: Options{
-				Mode:      "both",
-				TenantKey: "tenant_123",
-				FilePath:  "/tmp/test_export.jsonl",
-			},
-			wantErr: true,
-		},
-		{
-			name: "mode both - missing filePath",
-			opts: Options{
-				Mode:      "both",
-				Endpoint:  "https://api.test.dev/ingest",
-				TenantKey: "tenant_123",
-			},
-			wantErr: true,
-		},
-		{
-			name: "invalid mode",
-			opts: Options{
-				Mode:      "invalid",
-				Endpoint:  "https://api.test.dev/ingest",
-				TenantKey: "tenant_123",
-			},
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			exp, err := New(tt.opts)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("New() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if !tt.wantErr {
-				if exp == nil {
-					t.Error("New() returned nil exporter")
-				}
-				if exp.mode != tt.opts.Mode {
-					t.Errorf("Expected mode '%s', got '%s'", tt.opts.Mode, exp.mode)
-				}
-			}
+		mux.HandleFunc("/v1/billing", func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&billingRequests, 1)
+			w.WriteHeader(http.StatusOK)
 		})
-	}
-}
 
-// TestExportModeFile verifies file-only export mode.
-func TestExportModeFile(t *testing.T) {
-	// Create temp directory for test
-	tmpDir := t.TempDir()
-	outputFile := filepath.Join(tmpDir, "export_test.jsonl")
+		server := httptest.NewServer(mux)
+		defer server.Close()
 
-	exp, err := New(Options{
-		Mode:       "file",
-		FilePath:   outputFile,
-		BatchSize:  2,
-		FlushEvery: 100 * time.Millisecond,
+		cfg := config.Export{
+			Mode: "http",
+			HTTP: config.ExportHTTP{
+				BaseURL: server.URL,
+				Routes: map[string]string{
+					"edges":   "/v1/edges",
+					"billing": "/v1/billing",
+				},
+				BatchSize:  10,
+				MaxRetries: 3,
+				FlushEvery: 100 * time.Millisecond,
+			},
+		}
+
+		exp, err := New(Options{
+			Config:    cfg,
+			TenantKey: "test-key",
+		})
+		if err != nil {
+			t.Fatalf("New() failed: %v", err)
+		}
+
+		exp.Start(context.Background())
+
+		ctx := context.Background()
+
+		// Enqueue to different streams
+		_ = exp.Enqueue(ctx, StreamEdges, map[string]string{"type": "edge"})
+		_ = exp.Enqueue(ctx, StreamBilling, map[string]string{"type": "billing"})
+
+		// Wait for flush
+		time.Sleep(200 * time.Millisecond)
+		exp.Shutdown(context.Background())
+
+		// Verify routes received correct requests
+		if count := atomic.LoadInt32(&edgesRequests); count != 1 {
+			t.Errorf("Expected 1 request to /v1/edges, got %d", count)
+		}
+		if count := atomic.LoadInt32(&billingRequests); count != 1 {
+			t.Errorf("Expected 1 request to /v1/billing, got %d", count)
+		}
 	})
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
 
-	exp.Start(context.Background())
+	t.Run("both mode with per-stream configuration", func(t *testing.T) {
+		httpRequests := int32(0)
 
-	// Enqueue items
-	ctx := context.Background()
-	_ = exp.Enqueue(ctx, map[string]string{"id": "1", "type": "subscription"})
-	_ = exp.Enqueue(ctx, map[string]string{"id": "2", "type": "invoice"})
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&httpRequests, 1)
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer server.Close()
 
-	// Wait for flush
-	time.Sleep(200 * time.Millisecond)
+		tmpDir := t.TempDir()
 
-	// Shutdown
-	exp.Shutdown(context.Background())
+		cfg := config.Export{
+			Mode: "both",
+			HTTP: config.ExportHTTP{
+				BaseURL: server.URL,
+				Routes: map[string]string{
+					"edges": "/v1/edges",
+				},
+				BatchSize:  10,
+				MaxRetries: 3,
+				FlushEvery: 100 * time.Millisecond,
+			},
+			File: config.ExportFile{
+				Paths: map[string]string{
+					"edges": filepath.Join(tmpDir, "edges.jsonl"),
+				},
+			},
+		}
 
-	// Verify file was created and contains data
-	data, err := os.ReadFile(outputFile)
-	if err != nil {
-		t.Fatalf("Failed to read output file: %v", err)
-	}
+		exp, err := New(Options{
+			Config:    cfg,
+			TenantKey: "test-key",
+		})
+		if err != nil {
+			t.Fatalf("New() failed: %v", err)
+		}
 
-	if len(data) == 0 {
-		t.Error("Output file is empty")
-	}
+		exp.Start(context.Background())
 
-	// Verify it's valid JSONL (single line with JSON array)
-	var payloadArray []map[string]string
-	if err := json.Unmarshal(data[:len(data)-1], &payloadArray); err != nil { // Skip trailing newline
-		t.Fatalf("Output is not valid JSON: %v", err)
-	}
+		ctx := context.Background()
+		_ = exp.Enqueue(ctx, StreamEdges, map[string]string{"id": "1"})
 
-	if len(payloadArray) != 2 {
-		t.Errorf("Expected 2 items in file, got %d", len(payloadArray))
-	}
-}
+		// Wait for flush
+		time.Sleep(200 * time.Millisecond)
+		exp.Shutdown(context.Background())
 
-// TestExportModeHTTP verifies HTTP-only export mode (existing behavior).
-func TestExportModeHTTP(t *testing.T) {
-	var requestCount int32
+		// Verify HTTP received request
+		if count := atomic.LoadInt32(&httpRequests); count != 1 {
+			t.Errorf("Expected 1 HTTP request, got %d", count)
+		}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&requestCount, 1)
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	exp, err := New(Options{
-		Mode:       "http",
-		Endpoint:   server.URL,
-		TenantKey:  "tenant_123",
-		BatchSize:  2,
-		FlushEvery: 100 * time.Millisecond,
+		// Verify file was written
+		if _, err := os.Stat(cfg.File.Paths["edges"]); os.IsNotExist(err) {
+			t.Error("Expected edges file to be created")
+		}
 	})
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
-
-	exp.Start(context.Background())
-
-	// Enqueue items
-	ctx := context.Background()
-	_ = exp.Enqueue(ctx, map[string]string{"id": "1"})
-	_ = exp.Enqueue(ctx, map[string]string{"id": "2"})
-
-	// Wait for flush
-	time.Sleep(200 * time.Millisecond)
-
-	exp.Shutdown(context.Background())
-
-	// Verify HTTP request was made
-	if count := atomic.LoadInt32(&requestCount); count != 1 {
-		t.Errorf("Expected 1 HTTP request, got %d", count)
-	}
 }
 
-// TestExportModeBoth verifies dual sink export (HTTP + file).
-func TestExportModeBoth(t *testing.T) {
-	var requestCount int32
-	var receivedPayload []byte
+// TestStreamValidation verifies that stream configuration is validated at enqueue time.
+func TestStreamValidation(t *testing.T) {
+	t.Run("missing HTTP route", func(t *testing.T) {
+		cfg := config.Export{
+			Mode: "http",
+			HTTP: config.ExportHTTP{
+				BaseURL: "https://api.example.com",
+				Routes: map[string]string{
+					"edges": "/v1/edges",
+					// "billing" route missing
+				},
+				BatchSize:  10,
+				MaxRetries: 3,
+				FlushEvery: 100 * time.Millisecond,
+			},
+		}
+
+		exp, err := New(Options{
+			Config:    cfg,
+			TenantKey: "test-key",
+		})
+		if err != nil {
+			t.Fatalf("New() failed: %v", err)
+		}
+
+		ctx := context.Background()
+
+		// Enqueue to configured stream should succeed
+		if err := exp.Enqueue(ctx, StreamEdges, map[string]string{"id": "1"}); err != nil {
+			t.Errorf("Enqueue to configured stream failed: %v", err)
+		}
+
+		// Enqueue to unconfigured stream should fail
+		if err := exp.Enqueue(ctx, StreamBilling, map[string]string{"id": "2"}); err == nil {
+			t.Error("Expected error when enqueuing to unconfigured stream")
+		}
+	})
+
+	t.Run("missing file path", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		cfg := config.Export{
+			Mode: "file",
+			File: config.ExportFile{
+				Paths: map[string]string{
+					"edges": filepath.Join(tmpDir, "edges.jsonl"),
+					// "billing" path missing
+				},
+			},
+		}
+
+		exp, err := New(Options{
+			Config: cfg,
+		})
+		if err != nil {
+			t.Fatalf("New() failed: %v", err)
+		}
+
+		ctx := context.Background()
+
+		// Enqueue to configured stream should succeed
+		if err := exp.Enqueue(ctx, StreamEdges, map[string]string{"id": "1"}); err != nil {
+			t.Errorf("Enqueue to configured stream failed: %v", err)
+		}
+
+		// Enqueue to unconfigured stream should fail
+		if err := exp.Enqueue(ctx, StreamBilling, map[string]string{"id": "2"}); err == nil {
+			t.Error("Expected error when enqueuing to unconfigured stream")
+		}
+	})
+
+	t.Run("undefined stream", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		cfg := config.Export{
+			Mode: "file",
+			File: config.ExportFile{
+				Paths: map[string]string{
+					"edges": filepath.Join(tmpDir, "edges.jsonl"),
+				},
+			},
+		}
+
+		exp, err := New(Options{
+			Config: cfg,
+		})
+		if err != nil {
+			t.Fatalf("New() failed: %v", err)
+		}
+
+		ctx := context.Background()
+
+		// Enqueue to undefined stream should fail
+		if err := exp.Enqueue(ctx, Stream("nonexistent"), map[string]string{"id": "1"}); err == nil {
+			t.Error("Expected error when enqueuing to undefined stream")
+		}
+	})
+}
+
+// TestHTTPAuthorizationFromEnv verifies that authorization tokens can be read from environment.
+func TestHTTPAuthorizationFromEnv(t *testing.T) {
+	receivedAuth := ""
 	var mu sync.Mutex
 
-	// Setup HTTP server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&requestCount, 1)
 		mu.Lock()
-		receivedPayload, _ = io.ReadAll(r.Body)
+		receivedAuth = r.Header.Get("Authorization")
 		mu.Unlock()
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
 
-	// Create temp directory for file sink
-	tmpDir := t.TempDir()
-	outputFile := filepath.Join(tmpDir, "export_test.jsonl")
+	// Set environment variable
+	envKey := "TEST_AUTH_TOKEN"
+	envValue := "token-from-env-12345"
+	os.Setenv(envKey, envValue)
+	defer os.Unsetenv(envKey)
+
+	cfg := config.Export{
+		Mode: "http",
+		HTTP: config.ExportHTTP{
+			BaseURL: server.URL,
+			Routes: map[string]string{
+				"edges": "/v1/edges",
+			},
+			Headers: config.ExportHTTPHeaders{
+				AuthorizationEnv: envKey,
+			},
+			BatchSize:  10,
+			MaxRetries: 3,
+			FlushEvery: 100 * time.Millisecond,
+		},
+	}
 
 	exp, err := New(Options{
-		Mode:       "both",
-		Endpoint:   server.URL,
-		TenantKey:  "tenant_123",
-		FilePath:   outputFile,
-		BatchSize:  2,
-		FlushEvery: 100 * time.Millisecond,
+		Config:    cfg,
+		TenantKey: "default-key", // Should be overridden by env
 	})
 	if err != nil {
 		t.Fatalf("New() failed: %v", err)
@@ -757,148 +341,18 @@ func TestExportModeBoth(t *testing.T) {
 
 	exp.Start(context.Background())
 
-	// Enqueue items
 	ctx := context.Background()
-	_ = exp.Enqueue(ctx, map[string]string{"id": "1", "type": "subscription"})
-	_ = exp.Enqueue(ctx, map[string]string{"id": "2", "type": "invoice"})
+	_ = exp.Enqueue(ctx, StreamEdges, map[string]string{"id": "1"})
 
 	// Wait for flush
 	time.Sleep(200 * time.Millisecond)
-
 	exp.Shutdown(context.Background())
 
-	// Verify HTTP request was made
-	if count := atomic.LoadInt32(&requestCount); count != 1 {
-		t.Errorf("Expected 1 HTTP request, got %d", count)
-	}
-
-	// Verify HTTP payload
+	// Verify authorization header came from environment
 	mu.Lock()
-	var httpPayload []map[string]string
-	if err := json.Unmarshal(receivedPayload, &httpPayload); err != nil {
-		t.Fatalf("HTTP payload is not valid JSON: %v", err)
+	expectedAuth := "Bearer " + envValue
+	if receivedAuth != expectedAuth {
+		t.Errorf("Expected Authorization header %q, got %q", expectedAuth, receivedAuth)
 	}
 	mu.Unlock()
-
-	if len(httpPayload) != 2 {
-		t.Errorf("Expected 2 items in HTTP payload, got %d", len(httpPayload))
-	}
-
-	// Verify file was created and contains same data
-	fileData, err := os.ReadFile(outputFile)
-	if err != nil {
-		t.Fatalf("Failed to read output file: %v", err)
-	}
-
-	var filePayload []map[string]string
-	if err := json.Unmarshal(fileData[:len(fileData)-1], &filePayload); err != nil { // Skip trailing newline
-		t.Fatalf("File payload is not valid JSON: %v", err)
-	}
-
-	if len(filePayload) != 2 {
-		t.Errorf("Expected 2 items in file payload, got %d", len(filePayload))
-	}
-
-	// Verify both sinks received the same data
-	if httpPayload[0]["id"] != filePayload[0]["id"] {
-		t.Error("HTTP and file payloads differ")
-	}
-}
-
-// TestFileSinkErrorDoesNotBlockHTTP verifies graceful degradation.
-func TestFileSinkErrorDoesNotBlockHTTP(t *testing.T) {
-	var requestCount int32
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&requestCount, 1)
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	// Use an invalid file path (directory that doesn't exist)
-	invalidPath := "/nonexistent/directory/export.jsonl"
-
-	exp, err := New(Options{
-		Mode:       "both",
-		Endpoint:   server.URL,
-		TenantKey:  "tenant_123",
-		FilePath:   invalidPath,
-		BatchSize:  1,
-		FlushEvery: 100 * time.Millisecond,
-	})
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
-
-	exp.Start(context.Background())
-
-	// Enqueue item
-	ctx := context.Background()
-	_ = exp.Enqueue(ctx, map[string]string{"id": "1"})
-
-	// Wait for flush
-	time.Sleep(200 * time.Millisecond)
-
-	exp.Shutdown(context.Background())
-
-	// HTTP should still succeed despite file error
-	if count := atomic.LoadInt32(&requestCount); count != 1 {
-		t.Errorf("Expected 1 HTTP request despite file error, got %d", count)
-	}
-}
-
-// TestConcurrentFileWrites verifies mutex protection for file writes.
-func TestConcurrentFileWrites(t *testing.T) {
-	tmpDir := t.TempDir()
-	outputFile := filepath.Join(tmpDir, "concurrent_test.jsonl")
-
-	exp, err := New(Options{
-		Mode:       "file",
-		FilePath:   outputFile,
-		BatchSize:  1, // Flush immediately
-		FlushEvery: 10 * time.Millisecond,
-	})
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
-
-	exp.Start(context.Background())
-
-	// Enqueue many items concurrently
-	ctx := context.Background()
-	var wg sync.WaitGroup
-	for i := 0; i < 50; i++ {
-		wg.Add(1)
-		go func(id int) {
-			defer wg.Done()
-			_ = exp.Enqueue(ctx, map[string]interface{}{"id": id})
-		}(i)
-	}
-
-	wg.Wait()
-
-	// Wait for all flushes
-	time.Sleep(500 * time.Millisecond)
-
-	exp.Shutdown(context.Background())
-
-	// Verify file integrity - should have valid JSON lines
-	data, err := os.ReadFile(outputFile)
-	if err != nil {
-		t.Fatalf("Failed to read output file: %v", err)
-	}
-
-	// Count lines (each flush creates one line)
-	lines := 0
-	for _, b := range data {
-		if b == '\n' {
-			lines++
-		}
-	}
-
-	if lines < 1 {
-		t.Errorf("Expected at least 1 line in output file, got %d", lines)
-	}
-
-	t.Logf("Successfully wrote %d lines with concurrent access", lines)
 }

@@ -125,33 +125,33 @@ func runMatcherPipeline(ctx context.Context, cfg config.Config, tenantSalt []byt
 
 	log.Println("Stripe client initialized")
 
-	// Initialize exporter with edge-specific path
-	// Always use a separate file for link edges (not the billing data file)
-	edgeFilePath := "reports/link_edges.jsonl"
-	edgeEndpoint := cfg.Export.Endpoint + "/ingest/edges"
-
-	if cfg.Export.Mode == "file" || cfg.Export.Mode == "both" {
-		log.Printf("Link edges will be exported to file: %s", edgeFilePath)
-	}
-	if cfg.Export.Mode == "http" || cfg.Export.Mode == "both" {
-		log.Printf("Link edges will be exported to HTTP: %s", edgeEndpoint)
-	}
-
+	// Initialize exporter with per-stream configuration
 	exp, err := exporter.New(exporter.Options{
-		Mode:          cfg.Export.Mode,
-		Endpoint:      edgeEndpoint,
-		FilePath:      edgeFilePath,
+		Config:        cfg.Export,
 		TenantKey:     "test-tenant-key", // TODO: make configurable
-		BatchSize:     10,
-		FlushEvery:    1 * time.Second,
-		MaxRetries:    3,
 		QueueCapacity: 500,
 	})
 	if err != nil {
 		log.Fatalf("Failed to create exporter: %v", err)
 	}
 
-	log.Printf("Exporter initialized (mode: %s, file: %s)", cfg.Export.Mode, edgeFilePath)
+	// Log configured export destinations
+	if cfg.Export.Mode == "file" || cfg.Export.Mode == "both" {
+		if edgePath, ok := cfg.Export.File.Paths["edges"]; ok {
+			log.Printf("Link edges will be exported to file: %s", edgePath)
+		}
+		if billingPath, ok := cfg.Export.File.Paths["billing"]; ok {
+			log.Printf("Billing data will be exported to file: %s", billingPath)
+		}
+	}
+	if cfg.Export.Mode == "http" || cfg.Export.Mode == "both" {
+		if edgeRoute, ok := cfg.Export.HTTP.Routes["edges"]; ok {
+			log.Printf("Link edges will be exported to HTTP: %s%s", cfg.Export.HTTP.BaseURL, edgeRoute)
+		}
+		if billingRoute, ok := cfg.Export.HTTP.Routes["billing"]; ok {
+			log.Printf("Billing data will be exported to HTTP: %s%s", cfg.Export.HTTP.BaseURL, billingRoute)
+		}
+	}
 
 	// Start the exporter worker
 	exp.Start(ctx)
@@ -196,51 +196,22 @@ func runMatcherPipeline(ctx context.Context, cfg config.Config, tenantSalt []byt
 
 	log.Printf("Sanitized %d subscriptions and %d invoices", len(modelSubscriptions), len(modelInvoices))
 
-	// Export billing data to separate file (before running matchers)
-	if cfg.Export.Mode == "file" || cfg.Export.Mode == "both" {
-		log.Printf("Billing data will be exported to file: %s", cfg.Export.FilePath)
-	}
-	if cfg.Export.Mode == "http" || cfg.Export.Mode == "both" {
-		log.Printf("Billing data will be exported to HTTP: %s", cfg.Export.Endpoint)
-	}
-
-	billingExp, err := exporter.New(exporter.Options{
-		Mode:          cfg.Export.Mode,
-		Endpoint:      cfg.Export.Endpoint,
-		FilePath:      cfg.Export.FilePath, // Use config file path for billing data
-		TenantKey:     "test-tenant-key",
-		BatchSize:     10,
-		FlushEvery:    1 * time.Second,
-		MaxRetries:    3,
-		QueueCapacity: 500,
-	})
-	if err != nil {
-		log.Fatalf("Failed to create billing exporter: %v", err)
-	}
-
-	billingExp.Start(ctx)
+	// Export billing data using the StreamBilling stream
 	log.Println("Starting billing data export...")
-
-	// Enqueue billing data
 	for _, sub := range modelSubscriptions {
-		if err := billingExp.Enqueue(ctx, sub); err != nil {
+		if err := exp.Enqueue(ctx, exporter.StreamBilling, sub); err != nil {
 			log.Printf("Warning: Failed to enqueue subscription: %v", err)
 		}
 	}
 	for _, inv := range modelInvoices {
-		if err := billingExp.Enqueue(ctx, inv); err != nil {
+		if err := exp.Enqueue(ctx, exporter.StreamBilling, inv); err != nil {
 			log.Printf("Warning: Failed to enqueue invoice: %v", err)
 		}
 	}
+	log.Printf("Enqueued %d billing records to %s stream", len(modelSubscriptions)+len(modelInvoices), exporter.StreamBilling)
 
-	// Wait a bit for billing data to flush, then shutdown
+	// Wait a bit for billing data to flush
 	time.Sleep(2 * time.Second)
-	shutdownCtx1, cancel1 := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel1()
-	if err := billingExp.Shutdown(shutdownCtx1); err != nil {
-		log.Printf("Warning: Billing exporter shutdown had issues: %v", err)
-	}
-	log.Printf("Exported %d billing records to %s", len(modelSubscriptions)+len(modelInvoices), cfg.Export.FilePath)
 
 	// Convert to Lite structures for matchers
 	subsLite := stripec.ToSubscriptionLites(modelSubscriptions)
@@ -323,8 +294,12 @@ func runMatcherPipeline(ctx context.Context, cfg config.Config, tenantSalt []byt
 	fmt.Println()
 	if cfg.Export.Mode == "file" || cfg.Export.Mode == "both" {
 		fmt.Printf("✅ Pipeline run complete\n")
-		fmt.Printf("   • Billing data: %s\n", cfg.Export.FilePath)
-		fmt.Printf("   • Link edges:   %s\n", edgeFilePath)
+		if billingPath, ok := cfg.Export.File.Paths["billing"]; ok {
+			fmt.Printf("   • Billing data: %s\n", billingPath)
+		}
+		if edgePath, ok := cfg.Export.File.Paths["edges"]; ok {
+			fmt.Printf("   • Link edges:   %s\n", edgePath)
+		}
 	} else {
 		fmt.Println("✅ Pipeline run complete — data sent to HTTP endpoint")
 	}
@@ -358,15 +333,10 @@ func runBillingExportMode(ctx context.Context, cfg config.Config, tenantSalt []b
 	}
 	log.Printf("Stripe smoke check passed: found %d customers", customerCount)
 
-	// Initialize exporter using configuration
+	// Initialize exporter with per-stream configuration
 	exp, err := exporter.New(exporter.Options{
-		Mode:          cfg.Export.Mode,
-		Endpoint:      cfg.Export.Endpoint,
-		FilePath:      cfg.Export.FilePath,
+		Config:        cfg.Export,
 		TenantKey:     "test-tenant-key", // TODO: make configurable
-		BatchSize:     10,
-		FlushEvery:    1 * time.Second,
-		MaxRetries:    3,
 		QueueCapacity: 500, // Increased to handle larger datasets
 	})
 	if err != nil {
@@ -374,6 +344,18 @@ func runBillingExportMode(ctx context.Context, cfg config.Config, tenantSalt []b
 	}
 
 	log.Printf("Exporter initialized (mode: %s)", cfg.Export.Mode)
+
+	// Log configured export destinations for billing stream
+	if cfg.Export.Mode == "file" || cfg.Export.Mode == "both" {
+		if billingPath, ok := cfg.Export.File.Paths["billing"]; ok {
+			log.Printf("Billing data will be exported to file: %s", billingPath)
+		}
+	}
+	if cfg.Export.Mode == "http" || cfg.Export.Mode == "both" {
+		if billingRoute, ok := cfg.Export.HTTP.Routes["billing"]; ok {
+			log.Printf("Billing data will be exported to HTTP: %s%s", cfg.Export.HTTP.BaseURL, billingRoute)
+		}
+	}
 
 	// Start the exporter worker
 	exp.Start(ctx)
@@ -421,17 +403,17 @@ func runBillingExportMode(ctx context.Context, cfg config.Config, tenantSalt []b
 	log.Printf("Processed %d subscriptions with synthetic IDs", len(modelSubscriptions))
 	log.Printf("Processed %d invoices with synthetic IDs", len(modelInvoices))
 
-	// Enqueue data to exporter
+	// Enqueue data to exporter using StreamBilling stream
 	log.Println("Enqueuing subscriptions to exporter...")
 	for _, sub := range modelSubscriptions {
-		if err := exp.Enqueue(ctx, sub); err != nil {
+		if err := exp.Enqueue(ctx, exporter.StreamBilling, sub); err != nil {
 			log.Printf("Warning: Failed to enqueue subscription: %v", err)
 		}
 	}
 
 	log.Println("Enqueuing invoices to exporter...")
 	for _, inv := range modelInvoices {
-		if err := exp.Enqueue(ctx, inv); err != nil {
+		if err := exp.Enqueue(ctx, exporter.StreamBilling, inv); err != nil {
 			log.Printf("Warning: Failed to enqueue invoice: %v", err)
 		}
 	}
@@ -454,7 +436,10 @@ func runBillingExportMode(ctx context.Context, cfg config.Config, tenantSalt []b
 	// Print completion message
 	fmt.Println()
 	if cfg.Export.Mode == "file" || cfg.Export.Mode == "both" {
-		fmt.Printf("✅ Exporter run finished — output captured in %s\n", cfg.Export.FilePath)
+		fmt.Printf("✅ Exporter run finished\n")
+		if billingPath, ok := cfg.Export.File.Paths["billing"]; ok {
+			fmt.Printf("   • Billing data: %s\n", billingPath)
+		}
 	} else {
 		fmt.Println("✅ Exporter run finished — data sent to HTTP endpoint")
 	}

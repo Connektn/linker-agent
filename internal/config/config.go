@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -37,11 +38,34 @@ type Sources struct {
 	Stripe *StripeSource `yaml:"stripe"`
 }
 
+// ExportHTTPHeaders configures HTTP header behavior.
+type ExportHTTPHeaders struct {
+	AuthorizationEnv string `yaml:"authorizationEnv"` // env var name for Bearer token
+}
+
+// ExportHTTP configures HTTP export with per-stream routing.
+type ExportHTTP struct {
+	BaseURL    string            `yaml:"baseUrl"`    // Base URL (e.g., "https://api.connektn.dev")
+	Routes     map[string]string `yaml:"routes"`     // Per-stream routes (e.g., "edges": "/ingest/edges")
+	Headers    ExportHTTPHeaders `yaml:"headers"`    // HTTP headers configuration
+	MaxRetries int               `yaml:"maxRetries"` // Max retry attempts (default: 3)
+	BatchSize  int               `yaml:"batchSize"`  // Batch size for HTTP requests (default: 50)
+	FlushEvery time.Duration     `yaml:"flushEvery"` // Flush interval (default: 5s)
+}
+
+// ExportFile configures file export with per-stream paths.
+type ExportFile struct {
+	Paths map[string]string `yaml:"paths"` // Per-stream file paths (e.g., "edges": "reports/link_edges.jsonl")
+}
+
 // Export configures export sink behavior (HTTP endpoint and/or local file).
+// Supports both new per-stream configuration and legacy single-sink configuration.
 type Export struct {
-	Mode     string `yaml:"mode"`     // "http" | "file" | "both" (default: "http")
-	Endpoint string `yaml:"endpoint"` // HTTP endpoint URL (required if mode includes "http")
-	FilePath string `yaml:"filePath"` // Local file path (required if mode includes "file")
+	Mode     string     `yaml:"mode"`     // "http" | "file" | "both" (default: "http")
+	Endpoint string     `yaml:"endpoint"` // Legacy: HTTP endpoint URL
+	FilePath string     `yaml:"filePath"` // Legacy: Local file path
+	HTTP     ExportHTTP `yaml:"http"`     // New: per-stream HTTP configuration
+	File     ExportFile `yaml:"file"`     // New: per-stream file configuration
 }
 
 // MatcherRecipe defines the configuration for the ensemble matcher.
@@ -154,29 +178,9 @@ func validate(cfg *Config) error {
 		}
 	}
 
-	// Validate export configuration
-	// Default mode to "http" if not specified
-	if cfg.Export.Mode == "" {
-		cfg.Export.Mode = "http"
-	}
-
-	// Validate mode value
-	if cfg.Export.Mode != "http" && cfg.Export.Mode != "file" && cfg.Export.Mode != "both" {
-		return fmt.Errorf("export.mode must be 'http', 'file', or 'both'")
-	}
-
-	// If mode includes "http", endpoint must be set
-	if cfg.Export.Mode == "http" || cfg.Export.Mode == "both" {
-		if cfg.Export.Endpoint == "" {
-			return fmt.Errorf("export.endpoint must be set when mode is 'http' or 'both'")
-		}
-	}
-
-	// If mode includes "file", filePath must be set
-	if cfg.Export.Mode == "file" || cfg.Export.Mode == "both" {
-		if cfg.Export.FilePath == "" {
-			return fmt.Errorf("export.filePath must be set when mode is 'file' or 'both'")
-		}
+	// Validate and migrate export configuration
+	if err := validateAndMigrateExport(&cfg.Export); err != nil {
+		return fmt.Errorf("export: %w", err)
 	}
 
 	// Validate matcher configuration
@@ -185,6 +189,89 @@ func validate(cfg *Config) error {
 	}
 
 	return nil
+}
+
+// validateAndMigrateExport validates and migrates export configuration.
+// Legacy fields (Endpoint, FilePath) are migrated to new per-stream configuration.
+func validateAndMigrateExport(export *Export) error {
+	// Default mode to "http" if not specified
+	if export.Mode == "" {
+		export.Mode = "http"
+	}
+
+	// Validate mode value
+	if export.Mode != "http" && export.Mode != "file" && export.Mode != "both" {
+		return fmt.Errorf("mode must be 'http', 'file', or 'both'")
+	}
+
+	// Migrate legacy configuration to new per-stream configuration
+	migrateLegacyExportConfig(export)
+
+	// Apply defaults for HTTP configuration
+	if export.HTTP.MaxRetries == 0 {
+		export.HTTP.MaxRetries = 3
+	}
+	if export.HTTP.BatchSize == 0 {
+		export.HTTP.BatchSize = 50
+	}
+	if export.HTTP.FlushEvery == 0 {
+		export.HTTP.FlushEvery = 5 * time.Second
+	}
+
+	// Validate HTTP configuration if mode includes "http"
+	if export.Mode == "http" || export.Mode == "both" {
+		if export.HTTP.BaseURL == "" {
+			return fmt.Errorf("http.baseUrl must be set when mode is 'http' or 'both'")
+		}
+		// Ensure edges route exists (required stream)
+		if export.HTTP.Routes == nil {
+			export.HTTP.Routes = make(map[string]string)
+		}
+		if export.HTTP.Routes["edges"] == "" {
+			export.HTTP.Routes["edges"] = "/ingest/edges"
+		}
+	}
+
+	// Validate file configuration if mode includes "file"
+	if export.Mode == "file" || export.Mode == "both" {
+		// Ensure edges path exists (required stream)
+		if export.File.Paths == nil {
+			export.File.Paths = make(map[string]string)
+		}
+		if export.File.Paths["edges"] == "" {
+			return fmt.Errorf("file.paths.edges must be set when mode is 'file' or 'both'")
+		}
+	}
+
+	return nil
+}
+
+// migrateLegacyExportConfig migrates legacy export configuration to new per-stream format.
+// If legacy fields (Endpoint, FilePath) are set and new fields are empty, it copies them over.
+func migrateLegacyExportConfig(export *Export) {
+	// Migrate legacy Endpoint to HTTP.BaseURL
+	if export.Endpoint != "" && export.HTTP.BaseURL == "" {
+		export.HTTP.BaseURL = export.Endpoint
+	}
+
+	// Migrate legacy FilePath to File.Paths["edges"]
+	if export.FilePath != "" {
+		if export.File.Paths == nil {
+			export.File.Paths = make(map[string]string)
+		}
+		if export.File.Paths["edges"] == "" {
+			export.File.Paths["edges"] = export.FilePath
+		}
+	}
+
+	// Ensure default routes if using HTTP
+	if export.HTTP.Routes == nil && export.HTTP.BaseURL != "" {
+		export.HTTP.Routes = make(map[string]string)
+	}
+	// Set default edges route if not specified
+	if export.HTTP.BaseURL != "" && export.HTTP.Routes["edges"] == "" {
+		export.HTTP.Routes["edges"] = "/ingest/edges"
+	}
 }
 
 // validateMatcherRecipe validates the matcher recipe configuration.

@@ -95,7 +95,7 @@ func Run(ctx context.Context, ensemble matchers.Ensemble, exp *exporter.Exporter
 	// Export edges if exporter is provided
 	if exp != nil {
 		for _, edge := range accepted {
-			if err := exp.Enqueue(ctx, edge); err != nil {
+			if err := exp.Enqueue(ctx, exporter.StreamEdges, edge); err != nil {
 				return nil, fmt.Errorf("failed to enqueue edge: %w", err)
 			}
 		}

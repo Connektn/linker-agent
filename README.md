@@ -149,24 +149,53 @@ sources:
 - ❌ Metadata, descriptions, notes
 - ❌ Any free-form user input
 
-### 5. Dual Sink Exporter (`internal/exporter/`)
+### 5. Per-Stream Dual Sink Exporter (`internal/exporter/`)
 
-**Purpose:** Export anonymized data to HTTP endpoint and/or local file.
+**Purpose:** Export anonymized data to HTTP endpoint and/or local file with per-stream routing.
 
 **Features:**
+- **Per-stream routing:** Different data types (edges, billing, usage) route to distinct endpoints/files
 - **HTTP mode:** POST batched JSON to Connektn Cloud with retry logic
 - **File mode:** Append JSONL to local file for debugging/testing
 - **Both mode:** Export to HTTP and file simultaneously
+- **Environment-based auth:** Read bearer tokens from environment variables
 - Exponential backoff retry (2s, 4s, 8s intervals)
 - Idempotency keys (UUID v4) for safe retries
 - Graceful shutdown with queue flush
+- Backward compatible with legacy single-sink configuration
 
 **Configuration:**
 ```yaml
 export:
   mode: "both"                          # "http" | "file" | "both"
-  endpoint: "https://api.connektn.dev/ingest"
-  filePath: "reports/exporter_output.jsonl"
+
+  # Per-stream HTTP configuration
+  http:
+    baseUrl: "https://api.connektn.dev"
+    routes:
+      edges: "/ingest/edges"            # Link edges endpoint
+      billing: "/ingest/billing"        # Billing data endpoint
+      usage: "/ingest/usage"            # Usage events endpoint
+    headers:
+      authorizationEnv: "CONNEKTN_TENANT_KEY"  # Optional: env var for auth token
+    maxRetries: 3
+    batchSize: 50
+    flushEvery: 5s
+
+  # Per-stream file configuration
+  file:
+    paths:
+      edges: "reports/link_edges.jsonl"
+      billing: "reports/billing.jsonl"
+      usage: "reports/usage.jsonl"
+```
+
+**Legacy Configuration (Still Supported):**
+```yaml
+export:
+  mode: "file"
+  endpoint: "https://api.connektn.dev/ingest"  # Migrates to http.baseUrl
+  filePath: "reports/exporter_output.jsonl"    # Migrates to file.paths.edges
 ```
 
 ### 6. Matcher Framework (`internal/matchers/`)
@@ -267,11 +296,13 @@ bash scripts/seed_stripe_test_data.sh
   - Products: `prod_xxx` → `syn_prod_xxx`
 - 📦 **Stripe Connector:** Read-only access with rate limiting and smoke checks
 - 🔧 **Configuration Loader:** YAML-based config with `env:VAR_NAME` indirection
-- 📤 **Dual Sink Exporter:**
-  - HTTP mode: batched payloads to Connektn Cloud
-  - File mode: JSONL locally for testing
+- 📤 **Per-Stream Dual Sink Exporter:**
+  - HTTP mode: batched payloads to Connektn Cloud with per-stream routing
+  - File mode: JSONL locally for testing with per-stream file paths
   - Both mode: simultaneous HTTP + file export
-  - **Separate endpoints:** billing data → `/ingest`, link edges → `/ingest/edges`
+  - **Per-stream routing:** edges → `/ingest/edges`, billing → `/ingest/billing`, usage → `/ingest/usage`
+  - **Environment-based auth:** Read bearer tokens from environment variables
+  - **Backward compatible:** Legacy single-sink config auto-migrates
 - 🧠 **Matcher Framework:** Ensemble with 3 matchers
   - DeterministicIDMatcher (exact HMAC joins)
   - TemporalMatcher (time-based correlation)
@@ -327,9 +358,27 @@ sources:
     maxRequestsPerSecond: 8          # Rate limiting
 
 export:
-  mode: "both"                       # "http" | "file" | "both"
-  endpoint: "https://api.connektn.dev/ingest"
-  filePath: "reports/exporter_output.jsonl"
+  mode: "file"                       # "http" | "file" | "both"
+
+  # Per-stream HTTP configuration (used when mode is "http" or "both")
+  http:
+    baseUrl: "https://api.connektn.dev"
+    routes:
+      edges: "/ingest/edges"
+      billing: "/ingest/billing"
+      usage: "/ingest/usage"
+    headers:
+      authorizationEnv: "CONNEKTN_TENANT_KEY"  # Optional: env var for bearer token
+    maxRetries: 3
+    batchSize: 50
+    flushEvery: 5s
+
+  # Per-stream file configuration (used when mode is "file" or "both")
+  file:
+    paths:
+      edges: "reports/link_edges.jsonl"
+      billing: "reports/billing.jsonl"
+      usage: "reports/usage.jsonl"
 
 matchers:
   recipe:
