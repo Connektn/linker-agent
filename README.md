@@ -7,7 +7,7 @@
 
 ## 🔍 Overview
 
-The **Connektn Linker Agent** is the core on-premise component of the [Connektn Zero-Ownership CDP](https://connektn.dev).
+The **Connektn Linker Agent** is the core on-premise component of the [Connektn Zero-Ownership CDP](https://connektn.io).
 
 ### What is Zero-Ownership CDP?
 
@@ -171,7 +171,7 @@ export:
 
   # Per-stream HTTP configuration
   http:
-    baseUrl: "https://api.connektn.dev"
+    baseUrl: "https://api.connektn.io"
     routes:
       edges: "/ingest/edges"            # Link edges endpoint
       billing: "/ingest/billing"        # Billing data endpoint
@@ -194,7 +194,7 @@ export:
 ```yaml
 export:
   mode: "file"
-  endpoint: "https://api.connektn.dev/ingest"  # Migrates to http.baseUrl
+  endpoint: "https://api.connektn.io/ingest"  # Migrates to http.baseUrl
   filePath: "reports/exporter_output.jsonl"    # Migrates to file.paths.edges
 ```
 
@@ -362,7 +362,7 @@ export:
 
   # Per-stream HTTP configuration (used when mode is "http" or "both")
   http:
-    baseUrl: "https://api.connektn.dev"
+    baseUrl: "https://api.connektn.io"
     routes:
       edges: "/ingest/edges"
       billing: "/ingest/billing"
@@ -832,8 +832,8 @@ Apache License 2.0 — see [`LICENSE`](LICENSE).
 
 ## 💬 Support & Contact
 
-📫 founders@connektn.dev
-💻 [https://connektn.dev](https://connektn.dev)
+📫 founders@connektn.io
+💻 [https://connektn.io](https://connektn.io)
 🐙 [GitHub Issues](https://github.com/connektn/linker-agent/issues)
 
 ---

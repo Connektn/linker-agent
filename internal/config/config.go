@@ -45,7 +45,7 @@ type ExportHTTPHeaders struct {
 
 // ExportHTTP configures HTTP export with per-stream routing.
 type ExportHTTP struct {
-	BaseURL    string            `yaml:"baseUrl"`    // Base URL (e.g., "https://api.connektn.dev")
+	BaseURL    string            `yaml:"baseUrl"`    // Base URL (e.g., "https://api.connektn.io")
 	Routes     map[string]string `yaml:"routes"`     // Per-stream routes (e.g., "edges": "/ingest/edges")
 	Headers    ExportHTTPHeaders `yaml:"headers"`    // HTTP headers configuration
 	MaxRetries int               `yaml:"maxRetries"` // Max retry attempts (default: 3)

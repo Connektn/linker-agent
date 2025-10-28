@@ -16,7 +16,7 @@ export:
 
   # Per-stream HTTP configuration (used when mode is "http" or "both")
   http:
-    baseUrl: "https://api.connektn.dev"
+    baseUrl: "https://api.connektn.io"
     routes:
       edges: "/ingest/edges"
       billing: "/ingest/billing"

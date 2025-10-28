@@ -29,7 +29,7 @@ Extend the YAML schema and struct in `internal/config/config.go`:
 ```yaml
 export:
   mode: "http,file,both"     # optional, default "http"
-  endpoint: "https://api.connektn.dev/ingest"
+  endpoint: "https://api.connektn.io/ingest"
   filePath: "reports/exporter_output.jsonl"
 ```
 Struct addition:

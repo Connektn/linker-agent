@@ -33,7 +33,7 @@
 export:
   mode: "both"  # http | file | both
   http:
-    baseUrl: "https://api.connektn.dev"
+    baseUrl: "https://api.connektn.io"
     routes:
       edges: "/ingest/edges"
       billing: "/ingest/billing"
@@ -56,7 +56,7 @@ If **legacy** fields exist:
 ```yaml
 export:
   mode: "file"
-  endpoint: "https://api.connektn.dev/ingest"
+  endpoint: "https://api.connektn.io/ingest"
   filePath: "reports/exporter_output.jsonl"
 ```
 Map as:

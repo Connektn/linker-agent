@@ -377,7 +377,7 @@ sources:
 export:
   mode: "both"
   http:
-    baseUrl: "https://api.connektn.dev"
+    baseUrl: "https://api.connektn.io"
     routes:
       edges: "/v1/edges"
       billing: "/v1/billing"
@@ -392,8 +392,8 @@ export:
       billing: "reports/billing.jsonl"
 `,
 			checkFunc: func(t *testing.T, cfg Config) {
-				if cfg.Export.HTTP.BaseURL != "https://api.connektn.dev" {
-					t.Errorf("HTTP.BaseURL = %q, want %q", cfg.Export.HTTP.BaseURL, "https://api.connektn.dev")
+				if cfg.Export.HTTP.BaseURL != "https://api.connektn.io" {
+					t.Errorf("HTTP.BaseURL = %q, want %q", cfg.Export.HTTP.BaseURL, "https://api.connektn.io")
 				}
 				if cfg.Export.HTTP.Routes["edges"] != "/v1/edges" {
 					t.Errorf("HTTP.Routes[edges] = %q, want %q", cfg.Export.HTTP.Routes["edges"], "/v1/edges")

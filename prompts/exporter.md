@@ -63,7 +63,7 @@ type Exporter struct {
 }
 
 type Options struct {
-    Endpoint   string        // e.g. https://api.connektn.dev/ingest
+    Endpoint   string        // e.g. https://api.connektn.io/ingest
     TenantKey  string        // authentication key (not secret, tenant-scoped)
     BatchSize  int           // default 50
     FlushEvery time.Duration // default 5s
