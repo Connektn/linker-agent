@@ -566,6 +566,187 @@ cat reports/exporter_output.jsonl | jq -s 'flatten | .[].id' | grep -E '^"(cus_|
 
 ---
 
+## 🔔 Live Mode with Stripe Webhooks
+
+The Linker Agent supports real-time processing of Stripe events via webhooks. Instead of running periodic backfills, you can configure the agent to receive webhook events and process them as they occur.
+
+### Webhook Features
+
+- ✅ **Secure signature verification** (HMAC-SHA256)
+- ✅ **Idempotency** (duplicate events safely ignored)
+- ✅ **IP allowlist** (optional additional security)
+- ✅ **Retry logic** with exponential backoff
+- ✅ **Zero-trust model** (always fetches canonical objects from Stripe API)
+- ✅ **Same privacy guarantees** (synthetic IDs, no PII)
+
+### Supported Events
+
+The webhook handler processes the following Stripe event types:
+
+- **Invoice events:** `invoice.created`, `invoice.finalized`, `invoice.payment_succeeded`, `invoice.payment_failed`
+- **Subscription events:** `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`
+- **Charge events** (optional): `charge.succeeded`, `charge.refunded`
+
+Unknown event types are safely ignored with HTTP 200 response.
+
+### Configuration
+
+Add the webhook section to your `config.yaml`:
+
+```yaml
+sources:
+  stripe:
+    apiKey: "env:STRIPE_API_KEY"
+    maxRequestsPerSecond: 8
+
+    webhook:
+      enabled: true
+      path: "/webhooks/stripe"
+      signingSecret: "env:STRIPE_WEBHOOK_SECRET"
+
+      # Optional: IP allowlist (Stripe webhook IPs)
+      allowedIPRanges:
+        - "3.18.12.63/32"
+        - "3.130.192.231/32"
+
+      # Optional: timestamp tolerance (default: 300s)
+      maxSkew: 300s
+
+      # Optional: retry configuration
+      retry:
+        maxAttempts: 5
+        baseBackoff: 2s
+        maxBackoff: 30s
+```
+
+### Setup Instructions
+
+#### 1. Get Your Webhook Signing Secret
+
+In your Stripe Dashboard:
+1. Go to **Developers** → **Webhooks**
+2. Click **Add endpoint**
+3. Enter your endpoint URL: `https://your-domain.com/webhooks/stripe`
+4. Select events to receive (invoice.*, customer.subscription.*)
+5. Copy the **Signing secret** (starts with `whsec_`)
+
+#### 2. Configure Environment Variables
+
+```bash
+export STRIPE_API_KEY=sk_test_xxxxx
+export STRIPE_WEBHOOK_SECRET=whsec_xxxxx
+export TENANT_SALT=$(openssl rand -hex 32)
+```
+
+#### 3. Run the Agent
+
+```bash
+./linker-agent
+```
+
+The webhook endpoint will be available at the configured path (default: `/webhooks/stripe`).
+
+#### 4. Test with Stripe CLI (Local Development)
+
+For local testing, use the [Stripe CLI](https://stripe.com/docs/stripe-cli) to forward events:
+
+```bash
+# Install Stripe CLI
+brew install stripe/stripe-cli/stripe  # macOS
+# or download from https://stripe.com/docs/stripe-cli
+
+# Login
+stripe login
+
+# Forward events to local agent
+stripe listen --forward-to http://localhost:8080/webhooks/stripe
+
+# In another terminal, trigger test events
+stripe trigger invoice.payment_succeeded
+stripe trigger customer.subscription.created
+```
+
+**Expected Output (Agent Logs):**
+
+```
+2025/10/26 08:15:23 Webhook handler started on /webhooks/stripe
+2025/10/26 08:15:45 webhook event enqueued event_id=evt_test_xxx type=invoice.payment_succeeded
+2025/10/26 08:15:45 webhook job processed successfully event_id=evt_test_xxx type=invoice.payment_succeeded edges_exported=2
+```
+
+### How It Works
+
+1. **Stripe sends webhook** → Your agent's `/webhooks/stripe` endpoint
+2. **Signature verification** → HMAC-SHA256 validation with `signingSecret`
+3. **Idempotency check** → Duplicate `event.id` values are ignored
+4. **Job enqueuing** → Event metadata queued for processing
+5. **Return 200 immediately** → Stripe considers delivery successful
+6. **Background processing:**
+   - Fetch canonical object from Stripe API (never trust webhook payload)
+   - Sanitize to synthetic IDs
+   - Run matcher pipeline
+   - Export link edges via configured exporter
+
+### Security Model
+
+**Threat Model:**
+
+The webhook handler defends against:
+- ❌ **Forged events** (signature verification required)
+- ❌ **Replay attacks** (timestamp validation with `maxSkew`)
+- ❌ **Unauthorized IPs** (optional IP allowlist)
+- ❌ **PII in logs** (no payload logging, only metadata)
+
+**Zero-Trust Principle:**
+
+The agent **never trusts webhook payloads for data**. It only extracts:
+- Event ID (for idempotency)
+- Event type (to determine processing path)
+- Object ID (to fetch canonical object)
+- Timestamp (for replay protection)
+
+All actual data comes from direct Stripe API calls with expanded fields.
+
+### Monitoring
+
+The webhook handler exposes metrics counters:
+
+```go
+webhook_received_total          // Total events received
+webhook_verified_total          // Events that passed signature verification
+webhook_dup_dropped_total       // Duplicate events ignored
+webhook_enqueued_total          // Events queued for processing
+webhook_errors_total{reason}    // Errors by reason (signature_invalid, queue_full, etc.)
+webhook_processed_total{status} // Processing results (success, failed, ignored)
+```
+
+These can be exposed via a `/metrics` endpoint for Prometheus scraping (future enhancement).
+
+### Troubleshooting
+
+**Problem:** `signature verification failed`
+
+- **Solution:** Verify `STRIPE_WEBHOOK_SECRET` matches Stripe Dashboard
+- Check timestamp skew (system clock must be accurate within `maxSkew`)
+
+**Problem:** `IP address not in allowlist`
+
+- **Solution:** Add Stripe's webhook IPs to `allowedIPRanges` or remove the allowlist for testing
+- Stripe's webhook IPs: https://stripe.com/docs/ips
+
+**Problem:** `webhook job queue full`
+
+- **Solution:** Increase `queueDepth` in handler options or scale worker processing
+- Check if worker is blocked on Stripe API rate limits
+
+**Problem:** Events are duplicated
+
+- **Solution:** This should not happen due to idempotency tracking
+- Check logs for `duplicate webhook event ignored` messages
+- Verify event IDs are unique
+
+---
+
 ## 🔐 Privacy & Security Principles
 
 ### Zero-PII Architecture

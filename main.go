@@ -5,11 +5,17 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"linker-agent/internal/config"
 	stripec "linker-agent/internal/connectors/stripe"
 	"linker-agent/internal/exporter"
+	"linker-agent/internal/ingest/stripewebhook"
 	"linker-agent/internal/matchers"
 	"linker-agent/internal/models"
 	"linker-agent/internal/pipeline"
@@ -18,6 +24,7 @@ import (
 func main() {
 	// Parse command-line flags
 	exportBillingOnly := flag.Bool("export-billing-only", false, "Export billing data only (skip matcher pipeline)")
+	webhookMode := flag.Bool("webhook", false, "Run in webhook server mode (listen for Stripe webhooks)")
 	configPath := flag.String("config", "config.yaml", "Path to configuration file")
 	flag.Parse()
 
@@ -36,13 +43,18 @@ func main() {
 	// Initialize tenant salt for synthetic ID generation
 	tenantSalt := []byte(cfg.Privacy.TenantSalt)
 
-	// Branch: export billing only (legacy) vs. normal matcher pipeline mode
+	// Branch: webhook mode vs. one-off execution modes
+	if *webhookMode {
+		runWebhookServer(ctx, cfg, tenantSalt)
+		return
+	}
+
 	if *exportBillingOnly {
 		runBillingExportMode(ctx, cfg, tenantSalt)
 		return
 	}
 
-	// Default mode: run the matcher pipeline
+	// Default mode: run the matcher pipeline once
 	runMatcherPipeline(ctx, cfg, tenantSalt)
 }
 
@@ -443,4 +455,153 @@ func runBillingExportMode(ctx context.Context, cfg config.Config, tenantSalt []b
 	} else {
 		fmt.Println("✅ Exporter run finished — data sent to HTTP endpoint")
 	}
+}
+
+// runWebhookServer starts an HTTP server with the webhook handler.
+// It runs continuously until interrupted, processing webhook events in real-time.
+func runWebhookServer(ctx context.Context, cfg config.Config, tenantSalt []byte) {
+	log.Println("=== Starting Webhook Server Mode ===")
+
+	// Check if webhook is enabled
+	if cfg.Sources.Stripe == nil {
+		log.Fatal("Stripe source configuration is required")
+	}
+
+	if !cfg.Sources.Stripe.Webhook.Enabled {
+		log.Fatal("Webhook is not enabled in configuration. Set stripe.webhook.enabled: true")
+	}
+
+	// Initialize exporter
+	exp, err := exporter.New(exporter.Options{
+		Config:        cfg.Export,
+		TenantKey:     "test-tenant-key", // TODO: make configurable
+		QueueCapacity: 500,
+	})
+	if err != nil {
+		log.Fatalf("Failed to create exporter: %v", err)
+	}
+
+	// Start the exporter worker
+	exp.Start(ctx)
+	log.Println("Exporter worker started")
+
+	// Log configured export destinations
+	if cfg.Export.Mode == "file" || cfg.Export.Mode == "both" {
+		if edgePath, ok := cfg.Export.File.Paths["edges"]; ok {
+			log.Printf("Link edges will be exported to file: %s", edgePath)
+		}
+	}
+	if cfg.Export.Mode == "http" || cfg.Export.Mode == "both" {
+		if edgeRoute, ok := cfg.Export.HTTP.Routes["edges"]; ok {
+			log.Printf("Link edges will be exported to HTTP: %s%s", cfg.Export.HTTP.BaseURL, edgeRoute)
+		}
+	}
+
+	// Build ensemble from config
+	recipe := matchers.Recipe{
+		Name:              cfg.Matchers.Recipe.Name,
+		Version:           cfg.Matchers.Recipe.Version,
+		Weights:           cfg.Matchers.Recipe.Weights,
+		Threshold:         cfg.Matchers.Recipe.Threshold,
+		TemporalWindowSec: cfg.Matchers.Recipe.TemporalWindowSec,
+		SKUOverlapMin:     cfg.Matchers.Recipe.SKUOverlapMin,
+	}
+
+	ensemble := matchers.Ensemble{
+		Recipe: recipe,
+		Matchers: []matchers.Matcher{
+			matchers.DeterministicIDMatcher{TenantSalt: tenantSalt},
+			matchers.TemporalMatcher{
+				WindowSec:  recipe.TemporalWindowSec,
+				TenantSalt: tenantSalt,
+			},
+			matchers.SKUOverlapMatcher{TenantSalt: tenantSalt},
+		},
+		TenantSalt: tenantSalt,
+	}
+
+	log.Printf("Ensemble configured: %s/%s (threshold: %.2f)", recipe.Name, recipe.Version, recipe.Threshold)
+
+	// Create webhook worker
+	worker, err := stripewebhook.NewWorker(stripewebhook.WorkerOptions{
+		StripeAPIKey:  cfg.Sources.Stripe.APIKey,
+		StripeAccount: cfg.Sources.Stripe.Account,
+		TenantSalt:    tenantSalt,
+		Ensemble:      ensemble,
+		Exporter:      exp,
+		RetryConfig:   cfg.Sources.Stripe.Webhook.Retry,
+		Logger:        slog.Default(),
+	})
+	if err != nil {
+		log.Fatalf("Failed to create webhook worker: %v", err)
+	}
+
+	// Create webhook handler
+	handler, err := stripewebhook.NewHandler(stripewebhook.HandlerOptions{
+		Config:     cfg.Sources.Stripe.Webhook,
+		Worker:     worker,
+		Logger:     slog.Default(),
+		QueueDepth: 1000,
+	})
+	if err != nil {
+		log.Fatalf("Failed to create webhook handler: %v", err)
+	}
+
+	// Start handler job processor
+	handlerCtx, handlerCancel := context.WithCancel(ctx)
+	defer handlerCancel()
+	handler.Start(handlerCtx)
+
+	// Setup HTTP server
+	mux := http.NewServeMux()
+	mux.Handle(cfg.Sources.Stripe.Webhook.Path, handler)
+
+	// Add healthz endpoint
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK"))
+	})
+
+	server := &http.Server{
+		Addr:    cfg.Server.Addr,
+		Handler: mux,
+	}
+
+	// Handle graceful shutdown
+	go func() {
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+		<-sigChan
+
+		log.Println("Shutdown signal received, gracefully shutting down...")
+
+		// Stop accepting new webhooks
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			log.Printf("HTTP server shutdown error: %v", err)
+		}
+
+		// Shutdown webhook handler
+		if err := handler.Shutdown(shutdownCtx); err != nil {
+			log.Printf("Webhook handler shutdown error: %v", err)
+		}
+
+		// Shutdown exporter
+		if err := exp.Shutdown(shutdownCtx); err != nil {
+			log.Printf("Exporter shutdown error: %v", err)
+		}
+	}()
+
+	// Start HTTP server
+	log.Printf("Webhook server listening on %s", cfg.Server.Addr)
+	log.Printf("Webhook endpoint: %s", cfg.Sources.Stripe.Webhook.Path)
+	log.Printf("Healthz endpoint: /healthz")
+
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatalf("HTTP server error: %v", err)
+	}
+
+	log.Println("Webhook server stopped")
 }

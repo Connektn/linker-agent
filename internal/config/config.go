@@ -8,6 +8,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"strings"
 	"time"
@@ -26,11 +27,29 @@ type Privacy struct {
 	TenantSalt string `yaml:"tenantSalt"` // may be "env:NAME"
 }
 
+// StripeWebhookRetry configures retry behavior for webhook processing.
+type StripeWebhookRetry struct {
+	MaxAttempts int           `yaml:"maxAttempts"` // Max retry attempts (default: 5)
+	BaseBackoff time.Duration `yaml:"baseBackoff"` // Base backoff duration (default: 2s)
+	MaxBackoff  time.Duration `yaml:"maxBackoff"`  // Max backoff duration (default: 30s)
+}
+
+// StripeWebhook configures the Stripe webhook receiver.
+type StripeWebhook struct {
+	Enabled         bool               `yaml:"enabled"`         // Enable webhook receiver
+	Path            string             `yaml:"path"`            // HTTP path (e.g., "/webhooks/stripe")
+	SigningSecret   string             `yaml:"signingSecret"`   // may be "env:NAME"
+	AllowedIPRanges []string           `yaml:"allowedIPRanges"` // Optional IP allowlist (CIDR notation)
+	MaxSkew         time.Duration      `yaml:"maxSkew"`         // Timestamp tolerance (default: 300s)
+	Retry           StripeWebhookRetry `yaml:"retry"`           // Retry configuration
+}
+
 // StripeSource configures the Stripe API connector.
 type StripeSource struct {
-	APIKey               string `yaml:"apiKey"`               // may be "env:NAME"
-	Account              string `yaml:"account"`              // optional Stripe Connect account
-	MaxRequestsPerSecond int    `yaml:"maxRequestsPerSecond"` // rate limit (default: 8)
+	APIKey               string        `yaml:"apiKey"`               // may be "env:NAME"
+	Account              string        `yaml:"account"`              // optional Stripe Connect account
+	MaxRequestsPerSecond int           `yaml:"maxRequestsPerSecond"` // rate limit (default: 8)
+	Webhook              StripeWebhook `yaml:"webhook"`              // Webhook configuration
 }
 
 // Sources aggregates all data source connectors.
@@ -131,6 +150,7 @@ func resolveEnv(cfg *Config) {
 
 	if cfg.Sources.Stripe != nil {
 		cfg.Sources.Stripe.APIKey = resolveEnvValue(cfg.Sources.Stripe.APIKey)
+		cfg.Sources.Stripe.Webhook.SigningSecret = resolveEnvValue(cfg.Sources.Stripe.Webhook.SigningSecret)
 	}
 }
 
@@ -175,6 +195,11 @@ func validate(cfg *Config) error {
 		// Default maxRequestsPerSecond to 8 if not positive
 		if cfg.Sources.Stripe.MaxRequestsPerSecond <= 0 {
 			cfg.Sources.Stripe.MaxRequestsPerSecond = 8
+		}
+
+		// Validate webhook configuration
+		if err := validateStripeWebhook(&cfg.Sources.Stripe.Webhook); err != nil {
+			return fmt.Errorf("sources.stripe.webhook: %w", err)
 		}
 	}
 
@@ -327,6 +352,55 @@ func validateMatcherRecipe(recipe *MatcherRecipe) error {
 	for matcher, weight := range recipe.Weights {
 		if weight < 0 {
 			return fmt.Errorf("weight for matcher '%s' must be non-negative, got %.2f", matcher, weight)
+		}
+	}
+
+	return nil
+}
+
+// validateStripeWebhook validates and sets defaults for webhook configuration.
+func validateStripeWebhook(webhook *StripeWebhook) error {
+	// If webhook is not enabled, skip validation
+	if !webhook.Enabled {
+		return nil
+	}
+
+	// Validate required fields
+	if webhook.SigningSecret == "" {
+		return fmt.Errorf("signingSecret must be set when enabled is true")
+	}
+
+	if webhook.Path == "" {
+		webhook.Path = "/webhooks/stripe"
+	}
+
+	if !strings.HasPrefix(webhook.Path, "/") {
+		return fmt.Errorf("path must start with '/', got %q", webhook.Path)
+	}
+
+	// Set defaults
+	if webhook.MaxSkew == 0 {
+		webhook.MaxSkew = 300 * time.Second
+	}
+
+	if webhook.Retry.MaxAttempts == 0 {
+		webhook.Retry.MaxAttempts = 5
+	}
+
+	if webhook.Retry.BaseBackoff == 0 {
+		webhook.Retry.BaseBackoff = 2 * time.Second
+	}
+
+	if webhook.Retry.MaxBackoff == 0 {
+		webhook.Retry.MaxBackoff = 30 * time.Second
+	}
+
+	// Validate allowed IP ranges if provided
+	if len(webhook.AllowedIPRanges) > 0 {
+		for _, cidr := range webhook.AllowedIPRanges {
+			if _, _, err := net.ParseCIDR(cidr); err != nil {
+				return fmt.Errorf("invalid CIDR notation in allowedIPRanges: %q", cidr)
+			}
 		}
 	}
 

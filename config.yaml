@@ -11,6 +11,16 @@ sources:
     account: ""
     maxRequestsPerSecond: 8
 
+    webhook:
+      enabled: true
+      path: "/webhooks/stripe"
+      signingSecret: "env:STRIPE_WEBHOOK_SECRET"
+      maxSkew: 300s
+      retry:
+        maxAttempts: 5
+        baseBackoff: 2s
+        maxBackoff: 30s
+
 export:
   mode: "file"  # "http", "file", or "both"
 
