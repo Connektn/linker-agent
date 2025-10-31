@@ -5,8 +5,62 @@
 
 ---
 
+## 📑 Table of Contents
+
+- [Overview](#-overview)
+  - [What is Zero-Ownership CDP?](#what-is-zero-ownership-cdp)
+  - [Synthetic ID Anonymization](#synthetic-id-anonymization)
+- [Architecture](#-architecture)
+- [Implemented Modules](#-implemented-modules)
+  - [1. Configuration Loader](#1-configuration-loader-internalconfig)
+  - [2. Stripe Connector](#2-stripe-connector-internalconnectorsstripe)
+  - [3. Crypto & Synthetic ID System](#3-crypto--synthetic-id-system-internalcrypto)
+  - [4. Models & Sanitizers](#4-models--sanitizers-internalmodels-internalconnectorsstripesanitizego)
+  - [5. Per-Stream Dual Sink Exporter](#5-per-stream-dual-sink-exporter-internalexporter)
+  - [6. Matcher Framework](#6-matcher-framework-internalmatchers)
+  - [7. Pipeline Orchestrator](#7-pipeline-orchestrator-internalpipeline)
+  - [8. Stripe Test Data Seeder](#8-stripe-test-data-seeder-scriptsseed_stripe_test_datash)
+- [Implemented Features](#-implemented-features)
+- [Quick Start](#-quick-start)
+  - [Prerequisites](#prerequisites)
+  - [1. Clone and Build](#1-clone-and-build)
+  - [2. Configure](#2-configure)
+  - [3. Seed Stripe Test Data](#3-seed-stripe-test-data-optional)
+  - [4. Set Environment Variables](#4-set-environment-variables)
+  - [5. Run the Matcher Pipeline](#5-run-the-matcher-pipeline)
+  - [6. Verify Exported Data](#6-verify-exported-data)
+  - [7. Privacy Verification](#7-privacy-verification)
+- [Live Mode with Stripe Webhooks](#-live-mode-with-stripe-webhooks)
+  - [Webhook Features](#webhook-features)
+  - [Supported Events](#supported-events)
+  - [Configuration](#configuration)
+  - [Setup Instructions](#setup-instructions)
+  - [How It Works](#how-it-works)
+  - [Security Model](#security-model)
+  - [Monitoring](#monitoring)
+  - [Troubleshooting](#troubleshooting)
+- [Privacy & Security Principles](#-privacy--security-principles)
+  - [Zero-PII Architecture](#zero-pii-architecture)
+  - [Tenant Salt Management](#tenant-salt-management)
+  - [Privacy Modes](#privacy-modes)
+    - [Strict Mode (default)](#strict-mode-default)
+    - [Passthrough Mode](#passthrough-mode)
+    - [Export Guardrails](#export-guardrails)
+    - [Comparison Table](#comparison-table)
+- [Development](#-development)
+  - [Project Structure](#project-structure)
+  - [Running Tests](#running-tests)
+  - [Building](#building)
+- [Export Formats](#-export-formats)
+- [Contributing](#-contributing)
+- [License](#-license)
+- [Current Status & Roadmap](#-current-status--roadmap)
+- [Support & Contact](#-support--contact)
+
+---
+
 ## 🔍 Overview
-C
+
 The **Connektn Linker Agent** is the core on-premise component of the [Connektn Zero-Ownership CDP](https://connektn.io).
 
 ### What is Zero-Ownership CDP?
