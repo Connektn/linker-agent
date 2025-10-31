@@ -151,7 +151,7 @@ privacy:
   tenantSalt: ""
 `,
 			wantErr: true,
-			errMsg:  "privacy.tenantSalt must be set",
+			errMsg:  "privacy.tenantSalt must be set when idMode is 'strict'",
 		},
 		{
 			name: "missing env variable for tenantSalt",
@@ -163,7 +163,7 @@ privacy:
   tenantSalt: "env:NONEXISTENT_SALT"
 `,
 			wantErr: true,
-			errMsg:  "privacy.tenantSalt must be set",
+			errMsg:  "privacy.tenantSalt must be set when idMode is 'strict'",
 		},
 		{
 			name: "stripe present but missing apiKey",
@@ -574,6 +574,176 @@ export:
 
 			if err != nil {
 				t.Errorf("Load() unexpected error = %v", err)
+			}
+		})
+	}
+}
+
+func TestIDModeConfig(t *testing.T) {
+	tests := []struct {
+		name      string
+		yaml      string
+		wantErr   bool
+		errMsg    string
+		checkFunc func(*testing.T, Config)
+	}{
+		{
+			name: "strict idMode with tenantSalt",
+			yaml: `
+server:
+  addr: ":8080"
+privacy:
+  mode: "strict"
+  idMode: "strict"
+  tenantSalt: "test-salt"
+sources:
+  stripe:
+    apiKey: "sk_test_123"
+export:
+  mode: "file"
+  filePath: "/tmp/test.jsonl"
+`,
+			wantErr: false,
+			checkFunc: func(t *testing.T, cfg Config) {
+				if cfg.Privacy.IDMode != "strict" {
+					t.Errorf("Privacy.IDMode = %q, want %q", cfg.Privacy.IDMode, "strict")
+				}
+			},
+		},
+		{
+			name: "passthrough idMode without tenantSalt",
+			yaml: `
+server:
+  addr: ":8080"
+privacy:
+  mode: "strict"
+  idMode: "passthrough"
+sources:
+  stripe:
+    apiKey: "sk_test_123"
+export:
+  mode: "file"
+  filePath: "/tmp/test.jsonl"
+`,
+			wantErr: false,
+			checkFunc: func(t *testing.T, cfg Config) {
+				if cfg.Privacy.IDMode != "passthrough" {
+					t.Errorf("Privacy.IDMode = %q, want %q", cfg.Privacy.IDMode, "passthrough")
+				}
+			},
+		},
+		{
+			name: "idMode defaults to strict",
+			yaml: `
+server:
+  addr: ":8080"
+privacy:
+  mode: "strict"
+  tenantSalt: "test-salt"
+sources:
+  stripe:
+    apiKey: "sk_test_123"
+export:
+  mode: "file"
+  filePath: "/tmp/test.jsonl"
+`,
+			wantErr: false,
+			checkFunc: func(t *testing.T, cfg Config) {
+				if cfg.Privacy.IDMode != "strict" {
+					t.Errorf("Privacy.IDMode = %q, want %q (default)", cfg.Privacy.IDMode, "strict")
+				}
+			},
+		},
+		{
+			name: "invalid idMode",
+			yaml: `
+server:
+  addr: ":8080"
+privacy:
+  mode: "strict"
+  idMode: "invalid"
+  tenantSalt: "test-salt"
+sources:
+  stripe:
+    apiKey: "sk_test_123"
+export:
+  mode: "file"
+  filePath: "/tmp/test.jsonl"
+`,
+			wantErr: true,
+			errMsg:  "privacy.idMode must be 'strict' or 'passthrough', got \"invalid\"",
+		},
+		{
+			name: "strict idMode requires tenantSalt",
+			yaml: `
+server:
+  addr: ":8080"
+privacy:
+  mode: "strict"
+  idMode: "strict"
+sources:
+  stripe:
+    apiKey: "sk_test_123"
+export:
+  mode: "file"
+  filePath: "/tmp/test.jsonl"
+`,
+			wantErr: true,
+			errMsg:  "privacy.tenantSalt must be set when idMode is 'strict'",
+		},
+		{
+			name: "allowPassthroughExports flag",
+			yaml: `
+server:
+  addr: ":8080"
+privacy:
+  mode: "strict"
+  idMode: "passthrough"
+  allowPassthroughExports: true
+sources:
+  stripe:
+    apiKey: "sk_test_123"
+export:
+  mode: "file"
+  filePath: "/tmp/test.jsonl"
+`,
+			wantErr: false,
+			checkFunc: func(t *testing.T, cfg Config) {
+				if !cfg.Privacy.AllowPassthroughExports {
+					t.Errorf("Privacy.AllowPassthroughExports = %v, want true", cfg.Privacy.AllowPassthroughExports)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			configPath := filepath.Join(tmpDir, "config.yaml")
+			if err := os.WriteFile(configPath, []byte(tt.yaml), 0644); err != nil {
+				t.Fatalf("failed to write test config: %v", err)
+			}
+
+			cfg, err := Load(configPath)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("Load() error = nil, wantErr %v", tt.wantErr)
+					return
+				}
+				if tt.errMsg != "" && err.Error() != tt.errMsg {
+					t.Errorf("Load() error = %q, want %q", err.Error(), tt.errMsg)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("Load() unexpected error = %v", err)
+				return
+			}
+
+			if tt.checkFunc != nil {
+				tt.checkFunc(t, cfg)
 			}
 		})
 	}

@@ -88,6 +88,45 @@ type Options struct {
 	QueueCapacity int
 }
 
+// ValidatePassthroughExportOptions validates passthrough mode export configuration.
+// It ensures that raw platform IDs are not exported to non-Connektn endpoints unless explicitly allowed.
+//
+// Security: This prevents accidental leakage of raw platform IDs to third-party endpoints.
+func ValidatePassthroughExportOptions(idMode string, allowPassthrough bool, exportMode string, baseURL string) error {
+	// Only check if idMode is passthrough and HTTP export is enabled
+	if idMode != "passthrough" {
+		return nil
+	}
+
+	if exportMode != "http" && exportMode != "both" {
+		return nil // File-only export is always allowed
+	}
+
+	// Check if baseURL is a Connektn endpoint
+	connektnEndpoints := []string{
+		"https://api.connektn.dev",
+		"https://api.connektn.io",
+	}
+
+	isConnektnEndpoint := false
+	for _, endpoint := range connektnEndpoints {
+		if baseURL == endpoint || baseURL == endpoint+"/" {
+			isConnektnEndpoint = true
+			break
+		}
+	}
+
+	// If not a Connektn endpoint and passthrough exports are not explicitly allowed, return error
+	if !isConnektnEndpoint && !allowPassthrough {
+		return fmt.Errorf(
+			"exporter: passthrough mode with HTTP export to non-Connektn endpoint %q requires privacy.allowPassthroughExports = true in config",
+			baseURL,
+		)
+	}
+
+	return nil
+}
+
 // New creates a new Exporter with the given options.
 // Returns an error if required options are missing or invalid.
 func New(opts Options) (*Exporter, error) {

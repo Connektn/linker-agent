@@ -356,3 +356,125 @@ func TestHTTPAuthorizationFromEnv(t *testing.T) {
 	}
 	mu.Unlock()
 }
+
+// TestValidatePassthroughExportOptions verifies passthrough mode guardrails.
+func TestValidatePassthroughExportOptions(t *testing.T) {
+	tests := []struct {
+		name             string
+		idMode           string
+		allowPassthrough bool
+		exportMode       string
+		baseURL          string
+		wantErr          bool
+		errContains      string
+	}{
+		{
+			name:             "strict mode always allowed",
+			idMode:           "strict",
+			allowPassthrough: false,
+			exportMode:       "http",
+			baseURL:          "https://example.com",
+			wantErr:          false,
+		},
+		{
+			name:             "passthrough to Connektn dev endpoint",
+			idMode:           "passthrough",
+			allowPassthrough: false,
+			exportMode:       "http",
+			baseURL:          "https://api.connektn.dev",
+			wantErr:          false,
+		},
+		{
+			name:             "passthrough to Connektn io endpoint",
+			idMode:           "passthrough",
+			allowPassthrough: false,
+			exportMode:       "http",
+			baseURL:          "https://api.connektn.io",
+			wantErr:          false,
+		},
+		{
+			name:             "passthrough to Connektn endpoint with trailing slash",
+			idMode:           "passthrough",
+			allowPassthrough: false,
+			exportMode:       "http",
+			baseURL:          "https://api.connektn.dev/",
+			wantErr:          false,
+		},
+		{
+			name:             "passthrough to non-Connektn endpoint without allow flag",
+			idMode:           "passthrough",
+			allowPassthrough: false,
+			exportMode:       "http",
+			baseURL:          "https://example.com",
+			wantErr:          true,
+			errContains:      "allowPassthroughExports = true",
+		},
+		{
+			name:             "passthrough to non-Connektn endpoint with allow flag",
+			idMode:           "passthrough",
+			allowPassthrough: true,
+			exportMode:       "http",
+			baseURL:          "https://example.com",
+			wantErr:          false,
+		},
+		{
+			name:             "passthrough file mode always allowed",
+			idMode:           "passthrough",
+			allowPassthrough: false,
+			exportMode:       "file",
+			baseURL:          "",
+			wantErr:          false,
+		},
+		{
+			name:             "passthrough both mode to non-Connektn without allow",
+			idMode:           "passthrough",
+			allowPassthrough: false,
+			exportMode:       "both",
+			baseURL:          "https://example.com",
+			wantErr:          true,
+			errContains:      "allowPassthroughExports = true",
+		},
+		{
+			name:             "passthrough both mode to Connektn endpoint",
+			idMode:           "passthrough",
+			allowPassthrough: false,
+			exportMode:       "both",
+			baseURL:          "https://api.connektn.io",
+			wantErr:          false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidatePassthroughExportOptions(tt.idMode, tt.allowPassthrough, tt.exportMode, tt.baseURL)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("ValidatePassthroughExportOptions() error = nil, wantErr = true")
+					return
+				}
+				if tt.errContains != "" && !contains(err.Error(), tt.errContains) {
+					t.Errorf("ValidatePassthroughExportOptions() error = %q, want to contain %q", err.Error(), tt.errContains)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("ValidatePassthroughExportOptions() unexpected error = %v", err)
+				}
+			}
+		})
+	}
+}
+
+// contains is a helper function to check if a string contains a substring.
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && containsHelper(s, substr))
+}
+
+func containsHelper(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}

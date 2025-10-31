@@ -23,8 +23,10 @@ type Server struct {
 
 // Privacy controls privacy-preserving behavior and synthetic ID generation.
 type Privacy struct {
-	Mode       string `yaml:"mode"`       // "strict" or "standard"
-	TenantSalt string `yaml:"tenantSalt"` // may be "env:NAME"
+	Mode                     string `yaml:"mode"`                     // "strict" or "standard" (legacy)
+	IDMode                   string `yaml:"idMode"`                   // "strict" or "passthrough"
+	TenantSalt               string `yaml:"tenantSalt"`               // may be "env:NAME"
+	AllowPassthroughExports  bool   `yaml:"allowPassthroughExports"`  // allow HTTP export of raw IDs to non-Connektn endpoints
 }
 
 // StripeWebhookRetry configures retry behavior for webhook processing.
@@ -182,7 +184,23 @@ func validate(cfg *Config) error {
 		return fmt.Errorf("privacy.mode must be 'strict' or 'standard'")
 	}
 
-	if cfg.Privacy.TenantSalt == "" {
+	// Default idMode to "strict" if not specified
+	if cfg.Privacy.IDMode == "" {
+		cfg.Privacy.IDMode = "strict"
+	}
+
+	// Validate idMode
+	if cfg.Privacy.IDMode != "strict" && cfg.Privacy.IDMode != "passthrough" {
+		return fmt.Errorf("privacy.idMode must be 'strict' or 'passthrough', got %q", cfg.Privacy.IDMode)
+	}
+
+	// tenantSalt is required in strict mode
+	if cfg.Privacy.IDMode == "strict" && cfg.Privacy.TenantSalt == "" {
+		return fmt.Errorf("privacy.tenantSalt must be set when idMode is 'strict'")
+	}
+
+	// Legacy: tenantSalt validation for existing configs
+	if cfg.Privacy.TenantSalt == "" && cfg.Privacy.IDMode == "" {
 		return fmt.Errorf("privacy.tenantSalt must be set")
 	}
 

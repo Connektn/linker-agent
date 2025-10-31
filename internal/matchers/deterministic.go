@@ -15,12 +15,21 @@ import (
 //
 // Privacy: All IDs are synthetic. Proofs are HMAC hashes over synthetic inputs.
 type DeterministicIDMatcher struct {
-	TenantSalt []byte // Used for generating cryptographic proofs
+	TenantSalt []byte             // Used for generating cryptographic proofs
+	IDMapper   crypto.IDMapper    // ID mapper for privacy mode
 }
 
 // Name returns the unique identifier for this matcher.
 func (m DeterministicIDMatcher) Name() string {
 	return "deterministic_id"
+}
+
+// getIDMode returns the current ID mode from the mapper, defaulting to "strict".
+func (m DeterministicIDMatcher) getIDMode() string {
+	if m.IDMapper != nil {
+		return string(m.IDMapper.Mode())
+	}
+	return "strict"
 }
 
 // Match performs deterministic ID-based matching between usage events and billing data.
@@ -50,6 +59,10 @@ func (m DeterministicIDMatcher) Match(usages []UsageEvent, subs []SubscriptionLi
 				}
 
 				edges = append(edges, LinkEdge{
+					Meta: EdgeMeta{
+						Schema: "connektn.edge.v1",
+						IDMode: m.getIDMode(),
+					},
 					From:       usage.User,
 					To:         sub.ID,
 					Kind:       "user->subscription",
@@ -69,6 +82,10 @@ func (m DeterministicIDMatcher) Match(usages []UsageEvent, subs []SubscriptionLi
 						}
 
 						edges = append(edges, LinkEdge{
+							Meta: EdgeMeta{
+								Schema: "connektn.edge.v1",
+								IDMode: m.getIDMode(),
+							},
 							From:       usage.User,
 							To:         priceID,
 							Kind:       "user->price",
@@ -89,6 +106,10 @@ func (m DeterministicIDMatcher) Match(usages []UsageEvent, subs []SubscriptionLi
 						}
 
 						edges = append(edges, LinkEdge{
+							Meta: EdgeMeta{
+								Schema: "connektn.edge.v1",
+								IDMode: m.getIDMode(),
+							},
 							From:       usage.User,
 							To:         prodID,
 							Kind:       "user->product",
@@ -112,6 +133,10 @@ func (m DeterministicIDMatcher) Match(usages []UsageEvent, subs []SubscriptionLi
 				}
 
 				edges = append(edges, LinkEdge{
+					Meta: EdgeMeta{
+						Schema: "connektn.edge.v1",
+						IDMode: m.getIDMode(),
+					},
 					From:       usage.User,
 					To:         inv.ID,
 					Kind:       "user->invoice",
@@ -130,11 +155,12 @@ func (m DeterministicIDMatcher) Match(usages []UsageEvent, subs []SubscriptionLi
 
 // generateProof creates a cryptographic proof (HMAC-SHA256) for a link edge.
 // The proof is deterministic and verifiable but reveals no sensitive information.
+// The IDMode is included in the proof to prevent cross-mode replay attacks.
 //
 // Privacy: All inputs are already synthetic IDs. The proof is a one-way hash.
 func (m DeterministicIDMatcher) generateProof(from, to, kind, sku string) (string, error) {
-	// Concatenate inputs for proof generation
-	input := fmt.Sprintf("%s|%s|%s|%s|%s", from, to, kind, m.Name(), sku)
+	// Concatenate inputs for proof generation, including IDMode to prevent cross-mode replay
+	input := fmt.Sprintf("%s|%s|%s|%s|%s|%s", from, to, kind, m.Name(), sku, m.getIDMode())
 	proof, err := crypto.HMACSHA256Hex(m.TenantSalt, input)
 	if err != nil {
 		return "", err

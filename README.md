@@ -6,7 +6,7 @@
 ---
 
 ## 🔍 Overview
-
+C
 The **Connektn Linker Agent** is the core on-premise component of the [Connektn Zero-Ownership CDP](https://connektn.io).
 
 ### What is Zero-Ownership CDP?
@@ -830,6 +830,103 @@ openssl rand -hex 32
 - ⚠️ Never commit to version control
 - ⚠️ Rotate carefully (requires re-processing historical data)
 - ⚠️ Use different salts for different environments (dev/staging/prod)
+
+### Privacy Modes
+
+The Linker Agent supports two privacy modes for ID handling, configured via `privacy.idMode`:
+
+#### Strict Mode (default)
+
+**All identifiers are converted to synthetic IDs.** Raw platform IDs (e.g., Stripe `cus_`, `sub_`, `in_`) are never exported.
+
+```yaml
+privacy:
+  mode: "strict"
+  idMode: "strict"  # or omit (defaults to strict)
+  tenantSalt: "env:TENANT_SALT"
+```
+
+**Behavior:**
+- ✅ All IDs exported as `syn_cust_xxx`, `syn_sub_xxx`, etc.
+- ✅ Maximum privacy: no raw platform IDs ever leak
+- ✅ Tenant-isolated via HMAC with tenantSalt
+- ✅ Cryptographic proofs include mode to prevent replay
+
+**Use this mode when:**
+- You want maximum privacy guarantees
+- You're integrating with third-party systems
+- You need to comply with strict data protection regulations
+
+#### Passthrough Mode
+
+**Raw platform IDs are preserved** (e.g., Stripe `cus_xxx`, `sub_xxx`), but PII/PHI is still stripped.
+
+```yaml
+privacy:
+  mode: "strict"  # legacy field, still required
+  idMode: "passthrough"
+  allowPassthroughExports: false  # see guardrails below
+```
+
+**Behavior:**
+- ✅ IDs remain as-is: `cus_xxx`, `sub_xxx`, `in_xxx`
+- ✅ PII/PHI still stripped (no names, emails, addresses)
+- ✅ Easier integration with existing Stripe-based systems
+- ⚠️  Raw platform IDs visible in exports
+
+**Use this mode when:**
+- You need to correlate agent output with existing Stripe dashboards/tools
+- Your data pipeline already handles Stripe IDs securely
+- You're exporting to your own infrastructure (not third parties)
+
+#### Export Guardrails
+
+To prevent accidental exposure of raw IDs, passthrough mode includes startup validation:
+
+**HTTP Export Rules:**
+- ✅ Always allowed to `https://api.connektn.dev` or `https://api.connektn.io`
+- ❌ Blocked to other endpoints unless `allowPassthroughExports: true`
+- ⚠️  Warning banner logged on startup
+
+**File Export:**
+- ✅ Always allowed (you control the file system)
+- ⚠️  Warning banner logged on startup
+
+**Example Error (passthrough + HTTP to non-Connektn endpoint):**
+
+```
+FATAL: exporter: passthrough mode with HTTP export to non-Connektn endpoint
+"https://example.com" requires privacy.allowPassthroughExports = true in config
+```
+
+**Example Config (allow passthrough to custom endpoint):**
+
+```yaml
+privacy:
+  mode: "strict"
+  idMode: "passthrough"
+  allowPassthroughExports: true  # explicitly allow
+
+export:
+  mode: "http"
+  http:
+    baseUrl: "https://your-internal-api.company.com"
+    routes:
+      edges: "/ingest/edges"
+```
+
+#### Comparison Table
+
+| Feature | Strict Mode | Passthrough Mode |
+|---------|-------------|------------------|
+| **ID Format** | `syn_cust_abc123` | `cus_abc123` (original) |
+| **PII/PHI** | ❌ Never included | ❌ Never included |
+| **Proofs** | Include `idMode` | Include `idMode` |
+| **HTTP to Connektn** | ✅ Allowed | ✅ Allowed |
+| **HTTP to other endpoints** | ✅ Allowed | ⚠️  Requires `allowPassthroughExports: true` |
+| **File export** | ✅ Allowed | ✅ Allowed (with warning) |
+| **Cross-mode replay** | ❌ Blocked by proof | ❌ Blocked by proof |
+| **Startup logging** | ℹ️ "ID mode: strict" | ⚠️ "PASSTHROUGH MODE: exporting raw platform IDs (no PII)" |
 
 ---
 

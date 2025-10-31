@@ -21,20 +21,29 @@ type UsageEvent struct {
 	At      int64  // Unix timestamp in seconds
 }
 
+// EdgeMeta contains metadata about the LinkEdge for versioning and privacy mode tracking.
+// This metadata is included in all exported edges to enable proper validation and
+// prevent cross-mode replay attacks.
+type EdgeMeta struct {
+	Schema string `json:"schema"`  // Schema version (e.g., "connektn.edge.v1")
+	IDMode string `json:"id_mode"` // ID mode used: "strict" or "passthrough"
+}
+
 // LinkEdge is the output of the matching process: an explainable, exportable,
 // PII-free edge connecting two synthetic nodes with confidence and proof.
 //
 // Privacy: All IDs are synthetic. Proof is a cryptographic hash. Notes contain
 // only non-sensitive technical explanations (no PII, no raw IDs).
 type LinkEdge struct {
-	From       string  // Source node ID (e.g., syn_user_xxx, syn_sess_xxx)
-	To         string  // Target node ID (e.g., syn_sub_xxx, syn_inv_xxx, syn_price_xxx)
-	Kind       string  // Edge type (e.g., "user->subscription", "user->invoice")
-	Confidence float64 // Confidence score in range [0, 1]
-	Proof      string  // Cryptographic proof hex string (HMAC over inputs)
-	Recipe     string  // Recipe name/version used for matching (e.g., "default/v1")
-	At         int64   // Event timestamp or decision timestamp (Unix seconds)
-	Notes      string  // Short natural-language rationale (no PII, max ~100 chars)
+	Meta       EdgeMeta `json:"meta"`       // Metadata: schema version and ID mode
+	From       string   `json:"from"`       // Source node ID (e.g., syn_user_xxx, syn_sess_xxx)
+	To         string   `json:"to"`         // Target node ID (e.g., syn_sub_xxx, syn_inv_xxx, syn_price_xxx)
+	Kind       string   `json:"kind"`       // Edge type (e.g., "user->subscription", "user->invoice")
+	Confidence float64  `json:"confidence"` // Confidence score in range [0, 1]
+	Proof      string   `json:"proof"`      // Cryptographic proof hex string (HMAC over inputs)
+	Recipe     string   `json:"recipe"`     // Recipe name/version used for matching (e.g., "default/v1")
+	At         int64    `json:"at"`         // Event timestamp or decision timestamp (Unix seconds)
+	Notes      string   `json:"notes"`      // Short natural-language rationale (no PII, max ~100 chars)
 }
 
 // Matcher is the interface implemented by all matching algorithms.

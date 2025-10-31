@@ -38,7 +38,18 @@ func main() {
 
 	log.Println("Configuration loaded successfully")
 	log.Printf("Privacy mode: %s", cfg.Privacy.Mode)
+	log.Printf("ID mode: %s", cfg.Privacy.IDMode)
 	log.Printf("Server address: %s", cfg.Server.Addr)
+
+	// Log passthrough mode warnings
+	if cfg.Privacy.IDMode == "passthrough" {
+		if cfg.Export.Mode == "file" || cfg.Export.Mode == "both" {
+			log.Println("⚠️  PASSTHROUGH MODE: exporting raw platform IDs to file (no PII)")
+		}
+		if cfg.Export.Mode == "http" || cfg.Export.Mode == "both" {
+			log.Println("⚠️  PASSTHROUGH MODE: exporting raw platform IDs via HTTP (no PII)")
+		}
+	}
 
 	// Initialize tenant salt for synthetic ID generation
 	tenantSalt := []byte(cfg.Privacy.TenantSalt)
