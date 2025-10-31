@@ -5,13 +5,13 @@
 
 ---
 
-## 📑 Table of Contents
+## Table of Contents
 
-- [🔍 Overview](#-overview)
+- [Overview](#overview)
   - [What is Zero-Ownership CDP?](#what-is-zero-ownership-cdp)
   - [Synthetic ID Anonymization](#synthetic-id-anonymization)
-- [🏗️ Architecture](#-architecture)
-- [⚙️ Implemented Modules](#-implemented-modules)
+- [Architecture](#architecture)
+- [Implemented Modules](#implemented-modules)
   - [1. Configuration Loader](#1-configuration-loader-internalconfig)
   - [2. Stripe Connector](#2-stripe-connector-internalconnectorsstripe)
   - [3. Crypto & Synthetic ID System](#3-crypto--synthetic-id-system-internalcrypto)
@@ -20,8 +20,8 @@
   - [6. Matcher Framework](#6-matcher-framework-internalmatchers)
   - [7. Pipeline Orchestrator](#7-pipeline-orchestrator-internalpipeline)
   - [8. Stripe Test Data Seeder](#8-stripe-test-data-seeder-scriptsseed_stripe_test_datash)
-- [⚙️ Implemented Features](#-implemented-features)
-- [🚀 Quick Start](#-quick-start)
+- [Implemented Features](#implemented-features)
+- [Quick Start](#quick-start)
   - [Prerequisites](#prerequisites)
   - [1. Clone and Build](#1-clone-and-build)
   - [2. Configure](#2-configure)
@@ -30,7 +30,7 @@
   - [5. Run the Matcher Pipeline](#5-run-the-matcher-pipeline)
   - [6. Verify Exported Data](#6-verify-exported-data)
   - [7. Privacy Verification](#7-privacy-verification)
-- [🔔 Live Mode with Stripe Webhooks](#-live-mode-with-stripe-webhooks)
+- [Live Mode with Stripe Webhooks](#live-mode-with-stripe-webhooks)
   - [Webhook Features](#webhook-features)
   - [Supported Events](#supported-events)
   - [Configuration](#configuration)
@@ -39,7 +39,7 @@
   - [Security Model](#security-model)
   - [Monitoring](#monitoring)
   - [Troubleshooting](#troubleshooting)
-- [🔐 Privacy & Security Principles](#-privacy--security-principles)
+- [Privacy & Security Principles](#privacy--security-principles)
   - [Zero-PII Architecture](#zero-pii-architecture)
   - [Tenant Salt Management](#tenant-salt-management)
   - [Privacy Modes](#privacy-modes)
@@ -47,19 +47,19 @@
     - [Passthrough Mode](#passthrough-mode)
     - [Export Guardrails](#export-guardrails)
     - [Comparison Table](#comparison-table)
-- [🧰 Development](#-development)
+- [Development](#development)
   - [Project Structure](#project-structure)
   - [Running Tests](#running-tests)
   - [Building](#building)
-- [📊 Export Formats](#-export-formats)
-- [🤝 Contributing](#-contributing)
-- [📄 License](#-license)
-- [🧭 Current Status & Roadmap](#-current-status--roadmap)
-- [💬 Support & Contact](#-support--contact)
+- [Export Formats](#export-formats)
+- [Contributing](#contributing)
+- [License](#license)
+- [Current Status & Roadmap](#current-status--roadmap)
+- [Support & Contact](#support--contact)
 
 ---
 
-## 🔍 Overview
+## Overview
 
 The **Connektn Linker Agent** is the core on-premise component of the [Connektn Zero-Ownership CDP](https://connektn.io).
 
@@ -108,7 +108,7 @@ formatted   = "syn_{prefix}_{16-char-hex}"
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 tenant-infra
@@ -136,7 +136,7 @@ tenant-infra
 
 ---
 
-## ⚙️ Implemented Modules
+## Implemented Modules
 
 ### 1. Configuration Loader (`internal/config/`)
 
@@ -337,7 +337,7 @@ bash scripts/seed_stripe_test_data.sh
 
 ---
 
-## ⚙️ Implemented Features
+## Implemented Features
 
 ### ✅ Current Release (v0.3-alpha)
 
@@ -377,7 +377,7 @@ bash scripts/seed_stripe_test_data.sh
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
@@ -620,7 +620,7 @@ cat reports/exporter_output.jsonl | jq -s 'flatten | .[].id' | grep -E '^"(cus_|
 
 ---
 
-## 🔔 Live Mode with Stripe Webhooks
+## Live Mode with Stripe Webhooks
 
 The Linker Agent supports real-time processing of Stripe events via webhooks. Instead of running periodic backfills, you can configure the agent to receive webhook events and process them as they occur.
 
@@ -801,7 +801,7 @@ These can be exposed via a `/metrics` endpoint for Prometheus scraping (future e
 
 ---
 
-## 🔐 Privacy & Security Principles
+## Privacy & Security Principles
 
 ### Zero-PII Architecture
 
@@ -984,7 +984,7 @@ export:
 
 ---
 
-## 🧰 Development
+## Development
 
 ### Project Structure
 
@@ -1067,7 +1067,7 @@ go build -ldflags="-s -w" -o linker-agent main.go
 
 ---
 
-## 📊 Export Formats
+## Export Formats
 
 ### JSONL (File Mode)
 
@@ -1107,7 +1107,7 @@ Batched arrays sent as POST requests:
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
 We welcome issues and pull requests!
 
@@ -1118,13 +1118,13 @@ We welcome issues and pull requests!
 
 ---
 
-## 📄 License
+## License
 
 Apache License 2.0 — see [`LICENSE`](LICENSE).
 
 ---
 
-## 🧭 Current Status & Roadmap
+## Current Status & Roadmap
 
 ### ✅ v0.3-alpha (Current)
 
@@ -1162,7 +1162,7 @@ Apache License 2.0 — see [`LICENSE`](LICENSE).
 
 ---
 
-## 💬 Support & Contact
+## Support & Contact
 
 📫 founders@connektn.io
 💻 [https://connektn.io](https://connektn.io)
