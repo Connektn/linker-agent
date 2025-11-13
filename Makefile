@@ -68,7 +68,44 @@ clean: ## Remove build artifacts
 	rm -f $(BINARY_NAME)
 	rm -f coverage.out coverage.html
 	rm -rf seed_reports
+	rm -f test-agent send-command
 	@echo -e "$(COLOR_GREEN)✓ Clean complete$(COLOR_RESET)"
+
+##@ Testing (Story 2)
+
+.PHONY: test-agent
+test-agent: ## Build and run the test agent harness
+	@echo -e "$(COLOR_GREEN)Building test agent...$(COLOR_RESET)"
+	$(GO) build -o test-agent cmd/test-agent/main.go
+	@echo -e "$(COLOR_GREEN)Starting test agent...$(COLOR_RESET)"
+	@echo -e "$(COLOR_YELLOW)Use Ctrl+C to stop$(COLOR_RESET)"
+	./test-agent
+
+.PHONY: build-send-command
+build-send-command: ## Build the send-command utility
+	@echo -e "$(COLOR_GREEN)Building send-command utility...$(COLOR_RESET)"
+	$(GO) build -o send-command cmd/send-command/main.go
+	@echo -e "$(COLOR_GREEN)✓ Built: send-command$(COLOR_RESET)"
+
+.PHONY: test-control-restart
+test-control-restart: build-send-command ## Test control command: restart
+	@echo -e "$(COLOR_GREEN)Sending restart command...$(COLOR_RESET)"
+	./send-command restart
+
+.PHONY: test-control-switch-mode
+test-control-switch-mode: build-send-command ## Test control command: switch_mode
+	@echo -e "$(COLOR_GREEN)Sending switch_mode command...$(COLOR_RESET)"
+	./send-command switch_mode mode=passthrough
+
+.PHONY: test-control-stop
+test-control-stop: build-send-command ## Test control command: stop
+	@echo -e "$(COLOR_GREEN)Sending stop command...$(COLOR_RESET)"
+	./send-command stop
+
+.PHONY: test-health
+test-health: ## Test health check endpoint
+	@echo -e "$(COLOR_GREEN)Testing health endpoint...$(COLOR_RESET)"
+	@curl -s http://localhost:8081/healthz | jq . || echo "Agent not running or jq not installed"
 
 ##@ Docker
 
