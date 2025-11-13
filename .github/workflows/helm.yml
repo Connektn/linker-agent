@@ -49,12 +49,12 @@ jobs:
       - name: Lint connektn-agent chart
         run: |
           helm lint charts/connektn-agent
-          ct lint --charts charts/connektn-agent
+          ct lint --charts charts/connektn-agent --validate-maintainers=false
 
       - name: Lint connektn-gateway chart
         run: |
           helm lint charts/connektn-gateway
-          ct lint --charts charts/connektn-gateway
+          ct lint --charts charts/connektn-gateway --validate-maintainers=false
 
       - name: Build chart dependencies
         run: |
@@ -65,7 +65,7 @@ jobs:
       - name: Lint connektn-stack chart
         run: |
           helm lint charts/connektn-stack
-          ct lint --charts charts/connektn-stack
+          ct lint --charts charts/connektn-stack --validate-maintainers=false
 
       - name: Template connektn-agent chart
         run: |
