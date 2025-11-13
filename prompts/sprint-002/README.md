@@ -65,4 +65,4 @@ Phase 3 will build on this foundation to introduce **multi-region data replicati
 **Author:** Tomas Zezula  
 **Phase:** 2  
 **Codename:** *Kubernetes & Operational Resilience*
-**Status:** Backlog
+**Status:** In Progress

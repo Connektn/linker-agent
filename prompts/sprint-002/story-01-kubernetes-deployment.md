@@ -53,4 +53,4 @@ Enable both Lite (embedded queue) and HA (Kafka/Rabbit) profiles through Helm va
 ---
 
 **Author:** Tomas Zezula  
-**Status:** Backlog
+**Status:** Done
