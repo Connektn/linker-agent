@@ -93,9 +93,14 @@ test-control-restart: build-send-command ## Test control command: restart
 	./send-command restart
 
 .PHONY: test-control-switch-mode
-test-control-switch-mode: build-send-command ## Test control command: switch_mode
-	@echo -e "$(COLOR_GREEN)Sending switch_mode command...$(COLOR_RESET)"
+test-control-switch-mode: build-send-command ## Test control command: switch_mode to passthrough
+	@echo -e "$(COLOR_GREEN)Sending switch_mode command (passthrough)...$(COLOR_RESET)"
 	./send-command switch_mode mode=passthrough
+
+.PHONY: test-control-switch-strict
+test-control-switch-strict: build-send-command ## Test control command: switch_mode to strict
+	@echo -e "$(COLOR_GREEN)Sending switch_mode command (strict)...$(COLOR_RESET)"
+	./send-command switch_mode mode=strict
 
 .PHONY: test-control-stop
 test-control-stop: build-send-command ## Test control command: stop

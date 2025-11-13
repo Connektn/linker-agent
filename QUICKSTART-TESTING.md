@@ -99,10 +99,17 @@ Response (HTTP 200):
 **Test 2: Switch privacy mode**
 
 ```bash
+# Switch to passthrough mode
 make test-control-switch-mode
+
+# Switch back to strict mode
+make test-control-switch-strict
 ```
 
-**Expected:** Mode switches from "strict" to "passthrough"
+**Expected:**
+- First command switches from "strict" to "passthrough"
+- Second command switches back to "strict"
+- Agent logs show: `switching privacy mode from=strict to=passthrough`
 
 **Test 3: Stop agent**
 

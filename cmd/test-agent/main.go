@@ -93,14 +93,58 @@ func main() {
 		Logger:          logger,
 	})
 
-	// Register command handlers
+	// Register command handlers with verbose logging
 	handlers := control.NewHandlers(a, logger)
-	// Register each command with the server
-	srv.RegisterCommand(control.CommandStop, handlers.HandleStop)
-	srv.RegisterCommand(control.CommandStart, handlers.HandleStart)
-	srv.RegisterCommand(control.CommandRestart, handlers.HandleRestart)
-	srv.RegisterCommand(control.CommandSwitchMode, handlers.HandleSwitchMode)
-	srv.RegisterCommand(control.CommandUpgrade, handlers.HandleUpgrade)
+
+	// Wrap handlers to show what's happening
+	srv.RegisterCommand(control.CommandStop, func(params map[string]interface{}) error {
+		log.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		log.Println("🛑 STOP command received")
+		log.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		return handlers.HandleStop(params)
+	})
+
+	srv.RegisterCommand(control.CommandStart, func(params map[string]interface{}) error {
+		log.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		log.Println("▶️  START command received")
+		log.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		return handlers.HandleStart(params)
+	})
+
+	srv.RegisterCommand(control.CommandRestart, func(params map[string]interface{}) error {
+		log.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		log.Println("🔄 RESTART command received")
+		log.Printf("   Parameters: %v", params)
+		log.Println("   Effect: Agent will gracefully shutdown")
+		log.Println("   (In production, orchestrator would restart it)")
+		log.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		return handlers.HandleRestart(params)
+	})
+
+	srv.RegisterCommand(control.CommandSwitchMode, func(params map[string]interface{}) error {
+		oldMode := a.GetMode()
+		newMode := params["mode"]
+		log.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		log.Printf("🔀 SWITCH_MODE command received")
+		log.Printf("   From: %s → To: %s", oldMode, newMode)
+		log.Println("   Effect: Privacy mode will change WITHOUT restart")
+		log.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		err := handlers.HandleSwitchMode(params)
+		if err == nil {
+			log.Printf("✅ Mode successfully switched to: %s", a.GetMode())
+		}
+		return err
+	})
+
+	srv.RegisterCommand(control.CommandUpgrade, func(params map[string]interface{}) error {
+		log.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		log.Println("⬆️  UPGRADE command received")
+		log.Printf("   Target version: %v", params["version"])
+		log.Println("   Effect: NOT YET IMPLEMENTED")
+		log.Println("   Would download, verify, and replace agent binary")
+		log.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		return handlers.HandleUpgrade(params)
+	})
 
 	// Set shutdown function
 	a.SetShutdownFunc(cancel)
@@ -124,18 +168,27 @@ func main() {
 	log.Printf("  • Health:  http://localhost:8081/healthz")
 	log.Printf("  • Mock RX: http://localhost:9000/heartbeat")
 	log.Println()
+	log.Println("Current State:")
+	log.Printf("  • Mode: %s", a.GetMode())
+	log.Println()
 	log.Println("Test Commands:")
 	log.Println("  # Health check")
 	log.Println("  curl http://localhost:8081/healthz")
 	log.Println()
-	log.Println("  # Send control command (requires signing)")
-	log.Println("  # See docs/TESTING.md for examples")
+	log.Println("  # Switch modes")
+	log.Println("  make test-control-switch-mode    # → passthrough")
+	log.Println("  make test-control-switch-strict  # → strict")
+	log.Println()
+	log.Println("  # Other commands")
+	log.Println("  make test-control-restart")
+	log.Println("  make test-control-stop")
 	log.Println()
 	log.Println("Environment Variables:")
 	log.Printf("  ORGANIZATION_ID=%s", getEnvOrDefault("ORGANIZATION_ID", "org_test_123 (default)"))
 	log.Printf("  CONTROL_SECRET=%s", maskSecret(controlSecret))
 	log.Printf("  HEARTBEAT_SECRET=%s", maskSecret(heartbeatSecret))
 	log.Println()
+	log.Println("Watch this terminal for mode switches and heartbeats!")
 	log.Println("Press Ctrl+C to stop")
 	log.Println()
 
@@ -179,7 +232,7 @@ func startMockHeartbeatReceiver() {
 			return
 		}
 
-		log.Printf("✓ Heartbeat: agent=%s uptime=%ds mode=%s queue=%d dropped=%d",
+		log.Printf("💓 Heartbeat: agent=%s uptime=%ds mode=%s queue=%d dropped=%d",
 			payload.AgentID, payload.Uptime, payload.Mode, payload.QueueDepth, payload.DroppedCount)
 
 		w.WriteHeader(http.StatusOK)
