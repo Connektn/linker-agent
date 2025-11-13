@@ -58,7 +58,7 @@ connektn-gateway:
 
   config:
     upstream:
-      serviceName: connektn-stack-connektn-agent
+      serviceName: connektn-connektn-agent
       port: 8080
 
     # Disable TLS for local testing
