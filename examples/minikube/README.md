@@ -9,7 +9,42 @@ This example demonstrates how to deploy Connektn on Minikube for local developme
 - [Helm](https://helm.sh/docs/intro/install/) 3.0+ installed
 - Stripe test API key and webhook signing secret
 
-## Installation
+## Quick Start (Automated)
+
+The fastest way to get started is using the automated setup:
+
+```bash
+# From repository root, set required environment variables
+export STRIPE_API_KEY='sk_test_...'
+export STRIPE_WEBHOOK_SECRET='whsec_...'
+export TENANT_SALT='your-random-salt-at-least-32-chars'
+
+# Start everything with one command
+make minikube-up
+
+# In another terminal, port-forward the gateway
+make minikube-port-forward
+
+# When done, cleanup everything
+make minikube-down
+```
+
+**What it does:**
+- Starts Minikube with appropriate resources
+- Builds and loads the Docker image
+- Creates namespace and secrets
+- Installs the Helm chart
+- Waits for pods to be ready
+
+**Other useful commands:**
+- `make minikube-status` - Check deployment status
+- `make minikube-logs` - View pod logs
+- `make minikube-restart` - Restart the deployment
+- `make help` - See all available commands
+
+For manual step-by-step installation, continue reading below.
+
+## Manual Installation
 
 ### 1. Start Minikube
 
@@ -269,6 +304,20 @@ kubectl exec -it deployment/connektn-connektn-gateway -n connektn -- \
 ```
 
 ## Cleanup
+
+### Automated Cleanup
+
+```bash
+# Remove Connektn from Minikube (keeps Minikube running)
+make minikube-down
+
+# Or, remove Connektn and stop Minikube
+STOP_MINIKUBE=true make minikube-down
+```
+
+### Manual Cleanup
+
+If you prefer manual cleanup:
 
 ```bash
 # Uninstall Connektn
