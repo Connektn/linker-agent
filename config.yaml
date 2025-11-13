@@ -5,6 +5,24 @@ privacy:
   mode: "strict"
   tenantSalt: "env:TENANT_SALT"
 
+agent:
+  organizationId: "env:ORGANIZATION_ID"  # Your Connektn organization ID
+  version: "1.0.0"
+
+heartbeat:
+  enabled: true
+  endpoint: "https://api.connektn.io/agent/heartbeat"
+  interval: 30s
+  signatureSecret: "env:HEARTBEAT_SECRET"
+
+control:
+  enabled: true
+  listenAddr: ":8081"
+  signatureSecret: "env:CONTROL_SECRET"
+  maxClockSkew: 5m
+  nonceCache:
+    ttl: 10m
+
 sources:
   stripe:
     apiKey: "env:STRIPE_API_KEY"

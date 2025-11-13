@@ -112,6 +112,43 @@ test-health: ## Test health check endpoint
 	@echo -e "$(COLOR_GREEN)Testing health endpoint...$(COLOR_RESET)"
 	@curl -s http://localhost:8081/healthz | jq . || echo "Agent not running or jq not installed"
 
+##@ Production Verification
+
+.PHONY: verify-build
+verify-build: ## Verify production build succeeds
+	@echo -e "$(COLOR_GREEN)Building production agent...$(COLOR_RESET)"
+	$(GO) build -o dist/$(BINARY_NAME) main.go
+	@echo -e "$(COLOR_GREEN)✓ Build successful$(COLOR_RESET)"
+	@ls -lh dist/$(BINARY_NAME)
+
+.PHONY: verify-agent-id
+verify-agent-id: verify-build ## Verify agent ID persistence
+	@echo -e "$(COLOR_GREEN)Testing agent ID persistence...$(COLOR_RESET)"
+	@rm -f /var/lib/connektn/agent-id 2>/dev/null || true
+	@echo "First run (creating agent ID):"
+	@timeout 2 ./dist/$(BINARY_NAME) -config config.yaml 2>&1 | grep "Agent ID" || true
+	@echo ""
+	@echo "Agent ID file contents:"
+	@cat /var/lib/connektn/agent-id 2>/dev/null || echo "⚠ Agent ID file not created"
+	@echo ""
+	@echo "Second run (should use same ID):"
+	@timeout 2 ./dist/$(BINARY_NAME) -config config.yaml 2>&1 | grep "Agent ID" || true
+
+.PHONY: verify-heartbeat-receiver
+verify-heartbeat-receiver: ## Start mock heartbeat receiver (runs in foreground)
+	@echo -e "$(COLOR_GREEN)Starting mock heartbeat receiver on :9000$(COLOR_RESET)"
+	@echo -e "$(COLOR_YELLOW)Press Ctrl+C to stop$(COLOR_RESET)"
+	@python3 -c "import json,hmac,hashlib;from http.server import HTTPServer,BaseHTTPRequestHandler;SECRET=b'test-heartbeat-secret';class H(BaseHTTPRequestHandler):\n def do_POST(s):d=json.loads(s.rfile.read(int(s.headers['Content-Length'])));p=f\"{d['agentId']}:{d['organizationId']}:{d['timestamp']}:{d['uptime']}:{d['mode']}:{d['queueDepth']}:{d['droppedCount']}:{d['enqueuedCount']}:{d['dlqSize']}\";e=hmac.new(SECRET,p.encode(),hashlib.sha256).hexdigest();print(f\"✅ HB: uptime={d['uptime']:3d}s mode={d['mode']}\" if d['signature']==e else '❌ Bad sig');s.send_response(200);s.send_header('Content-Type','application/json');s.end_headers();s.wfile.write(b'{\"status\":\"ok\"}')\n def log_message(s,*a):pass\nHTTPServer(('',9000),H).serve_forever()"
+
+.PHONY: verify-all
+verify-all: test verify-build ## Run all tests and verify production build
+	@echo -e "$(COLOR_GREEN)✓ All verifications passed$(COLOR_RESET)"
+	@echo ""
+	@echo -e "$(COLOR_BLUE)Next steps:$(COLOR_RESET)"
+	@echo "  1. See QUICKSTART-VERIFICATION.md for 10-minute verification workflow"
+	@echo "  2. See VERIFICATION.md for comprehensive testing procedures"
+	@echo "  3. See PRODUCTION-INTEGRATION.md for deployment guidance"
+
 ##@ Docker
 
 .PHONY: docker-build

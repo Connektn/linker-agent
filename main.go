@@ -12,13 +12,18 @@ import (
 	"syscall"
 	"time"
 
+	"linker-agent/internal/agent"
+	"linker-agent/internal/agentid"
 	"linker-agent/internal/config"
 	stripec "linker-agent/internal/connectors/stripe"
+	"linker-agent/internal/control"
 	"linker-agent/internal/exporter"
 	"linker-agent/internal/ingest/stripewebhook"
 	"linker-agent/internal/matchers"
 	"linker-agent/internal/models"
 	"linker-agent/internal/pipeline"
+
+	"go.uber.org/zap"
 )
 
 func main() {
@@ -483,6 +488,36 @@ func runBillingExportMode(ctx context.Context, cfg config.Config, tenantSalt []b
 func runWebhookServer(ctx context.Context, cfg config.Config, tenantSalt []byte) {
 	log.Println("=== Starting Webhook Server Mode ===")
 
+	// Initialize logger
+	logger, err := zap.NewProduction()
+	if err != nil {
+		log.Fatalf("Failed to create logger: %v", err)
+	}
+	defer logger.Sync()
+
+	// Initialize agent ID
+	generator := agentid.NewGenerator("") // Uses default path: /var/lib/connektn/agent-id
+	agentID, err := generator.GetOrCreate()
+	if err != nil {
+		log.Fatalf("Failed to get agent ID: %v", err)
+	}
+	log.Printf("Agent ID: %s", agentID)
+
+	// Create agent instance
+	agentInstance, err := agent.New(agent.Config{
+		AgentID:        agentID,
+		OrganizationID: cfg.Agent.OrganizationID,
+		Version:        cfg.Agent.Version,
+		InitialMode:    cfg.Privacy.Mode,
+		Logger:         logger,
+	})
+	if err != nil {
+		log.Fatalf("Failed to create agent: %v", err)
+	}
+
+	log.Printf("Agent initialized: org=%s version=%s mode=%s",
+		agentInstance.OrganizationID(), agentInstance.Version(), agentInstance.GetMode())
+
 	// Check if webhook is enabled
 	if cfg.Sources.Stripe == nil {
 		log.Fatal("Stripe source configuration is required")
@@ -573,6 +608,55 @@ func runWebhookServer(ctx context.Context, cfg config.Config, tenantSalt []byte)
 	defer handlerCancel()
 	handler.Start(handlerCtx)
 
+	// Start heartbeat sender if enabled
+	var heartbeatSender *agent.HeartbeatSender
+	if cfg.Heartbeat.Enabled {
+		heartbeatSender, err = agent.NewHeartbeatSender(agentInstance, agent.HeartbeatSenderConfig{
+			Endpoint:     cfg.Heartbeat.Endpoint,
+			Interval:     cfg.Heartbeat.Interval,
+			Secret:       cfg.Heartbeat.SignatureSecret,
+			QueueMetrics: exp, // Exporter implements QueueMetricsProvider
+			Logger:       logger,
+		})
+		if err != nil {
+			log.Fatalf("Failed to create heartbeat sender: %v", err)
+		}
+
+		go heartbeatSender.Start(handlerCtx)
+		log.Printf("Heartbeat sender started (interval: %v, endpoint: %s)", cfg.Heartbeat.Interval, cfg.Heartbeat.Endpoint)
+	}
+
+	// Start control server if enabled
+	var controlServer *control.Server
+	if cfg.Control.Enabled {
+		controlServer = control.NewServer(control.ServerConfig{
+			ListenAddr:      cfg.Control.ListenAddr,
+			SignatureSecret: cfg.Control.SignatureSecret,
+			MaxClockSkew:    cfg.Control.MaxClockSkew,
+			NonceCacheTTL:   cfg.Control.NonceCache.TTL,
+			Logger:          logger,
+		})
+
+		// Register command handlers
+		handlers := control.NewHandlers(agentInstance, logger)
+		controlServer.RegisterCommand(control.CommandStop, handlers.HandleStop)
+		controlServer.RegisterCommand(control.CommandStart, handlers.HandleStart)
+		controlServer.RegisterCommand(control.CommandRestart, handlers.HandleRestart)
+		controlServer.RegisterCommand(control.CommandSwitchMode, handlers.HandleSwitchMode)
+		controlServer.RegisterCommand(control.CommandUpgrade, handlers.HandleUpgrade)
+
+		// Set shutdown function
+		agentInstance.SetShutdownFunc(handlerCancel)
+
+		go func() {
+			if err := controlServer.Start(); err != nil {
+				log.Printf("Control server error: %v", err)
+			}
+		}()
+
+		log.Printf("Control server started on %s", cfg.Control.ListenAddr)
+	}
+
 	// Setup HTTP server
 	mux := http.NewServeMux()
 	mux.Handle(cfg.Sources.Stripe.Webhook.Path, handler)
@@ -619,6 +703,13 @@ func runWebhookServer(ctx context.Context, cfg config.Config, tenantSalt []byte)
 			log.Printf("HTTP server shutdown error: %v", err)
 		}
 
+		// Shutdown control server
+		if controlServer != nil {
+			if err := controlServer.Shutdown(shutdownCtx); err != nil {
+				log.Printf("Control server shutdown error: %v", err)
+			}
+		}
+
 		// Shutdown webhook handler
 		if err := handler.Shutdown(shutdownCtx); err != nil {
 			log.Printf("Webhook handler shutdown error: %v", err)
@@ -631,11 +722,26 @@ func runWebhookServer(ctx context.Context, cfg config.Config, tenantSalt []byte)
 	}()
 
 	// Start HTTP server
-	log.Printf("Webhook server listening on %s", cfg.Server.Addr)
-	log.Printf("Webhook endpoint: %s", cfg.Sources.Stripe.Webhook.Path)
-	log.Printf("Liveness probe: /healthz")
-	log.Printf("Readiness probe: /readyz")
-	log.Printf("Metrics endpoint: /metrics")
+	log.Println()
+	log.Println("=== Connektn Linker Agent Ready ===")
+	log.Printf("Agent ID: %s", agentInstance.ID())
+	log.Printf("Organization: %s", agentInstance.OrganizationID())
+	log.Printf("Version: %s", agentInstance.Version())
+	log.Printf("Mode: %s", agentInstance.GetMode())
+	log.Println()
+	log.Printf("Webhook server: %s", cfg.Server.Addr)
+	log.Printf("  • Webhook endpoint: %s", cfg.Sources.Stripe.Webhook.Path)
+	log.Printf("  • Liveness probe: /healthz")
+	log.Printf("  • Readiness probe: /readyz")
+	log.Printf("  • Metrics endpoint: /metrics")
+	if cfg.Control.Enabled {
+		log.Printf("Control server: %s", cfg.Control.ListenAddr)
+		log.Printf("  • Command endpoint: /api/control/command")
+	}
+	if cfg.Heartbeat.Enabled {
+		log.Printf("Heartbeat: %s (every %v)", cfg.Heartbeat.Endpoint, cfg.Heartbeat.Interval)
+	}
+	log.Println()
 
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("HTTP server error: %v", err)

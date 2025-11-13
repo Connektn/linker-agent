@@ -91,3 +91,9 @@ func (q *queue) dropped() uint64 {
 func (q *queue) enqueued() uint64 {
 	return q.enqueuedCount.Load()
 }
+
+// dlqSize returns 0 (DLQ not yet implemented)
+// TODO: Implement dead letter queue in future story
+func (q *queue) dlqSize() int {
+	return 0
+}
