@@ -105,13 +105,46 @@ type Matchers struct {
 	Recipe MatcherRecipe `yaml:"recipe"` // Ensemble recipe configuration
 }
 
+// Heartbeat configures periodic heartbeat transmission to Connektn Cloud.
+type Heartbeat struct {
+	Enabled         bool          `yaml:"enabled"`         // Enable heartbeat transmission
+	Interval        time.Duration `yaml:"interval"`        // Heartbeat interval (default: 30s)
+	Endpoint        string        `yaml:"endpoint"`        // Cloud endpoint for heartbeats
+	SignatureSecret string        `yaml:"signatureSecret"` // HMAC signature secret (may be "env:NAME")
+}
+
+// ControlNonceCache configures the nonce cache for replay protection.
+type ControlNonceCache struct {
+	Size int           `yaml:"size"` // Max number of nonces to cache (default: 1000)
+	TTL  time.Duration `yaml:"ttl"`  // Nonce expiration time (default: 600s)
+}
+
+// Control configures the control command HTTP endpoint.
+type Control struct {
+	Enabled         bool              `yaml:"enabled"`         // Enable control command endpoint
+	ListenAddr      string            `yaml:"listenAddr"`      // Listen address (default: ":8081")
+	SignatureSecret string            `yaml:"signatureSecret"` // HMAC signature secret (may be "env:NAME")
+	MaxClockSkew    time.Duration     `yaml:"maxClockSkew"`    // Max acceptable clock skew (default: 300s)
+	NonceCache      ControlNonceCache `yaml:"nonceCache"`      // Nonce cache configuration
+}
+
+// Agent configures agent-specific settings.
+type Agent struct {
+	ID             string `yaml:"id"`             // Agent ID (generated on first run if empty)
+	OrganizationID string `yaml:"organizationId"` // Organization ID (may be "env:NAME")
+	Version        string `yaml:"version"`        // Agent version
+}
+
 // Config is the root configuration structure.
 type Config struct {
-	Server   Server   `yaml:"server"`
-	Privacy  Privacy  `yaml:"privacy"`
-	Sources  Sources  `yaml:"sources"`
-	Export   Export   `yaml:"export"`
-	Matchers Matchers `yaml:"matchers"` // Matcher framework configuration
+	Agent     Agent     `yaml:"agent"`
+	Server    Server    `yaml:"server"`
+	Privacy   Privacy   `yaml:"privacy"`
+	Sources   Sources   `yaml:"sources"`
+	Export    Export    `yaml:"export"`
+	Matchers  Matchers  `yaml:"matchers"` // Matcher framework configuration
+	Heartbeat Heartbeat `yaml:"heartbeat"`
+	Control   Control   `yaml:"control"`
 }
 
 // Load reads a YAML configuration file from the given path, resolves environment
@@ -149,6 +182,9 @@ func Load(path string) (Config, error) {
 // "env:NAME" with the value from os.Getenv("NAME"). Whitespace around NAME is trimmed.
 func resolveEnv(cfg *Config) {
 	cfg.Privacy.TenantSalt = resolveEnvValue(cfg.Privacy.TenantSalt)
+	cfg.Agent.OrganizationID = resolveEnvValue(cfg.Agent.OrganizationID)
+	cfg.Heartbeat.SignatureSecret = resolveEnvValue(cfg.Heartbeat.SignatureSecret)
+	cfg.Control.SignatureSecret = resolveEnvValue(cfg.Control.SignatureSecret)
 
 	if cfg.Sources.Stripe != nil {
 		cfg.Sources.Stripe.APIKey = resolveEnvValue(cfg.Sources.Stripe.APIKey)
@@ -229,6 +265,16 @@ func validate(cfg *Config) error {
 	// Validate matcher configuration
 	if err := validateMatcherRecipe(&cfg.Matchers.Recipe); err != nil {
 		return fmt.Errorf("matchers.recipe: %w", err)
+	}
+
+	// Apply heartbeat defaults and validate
+	if err := validateHeartbeat(&cfg.Heartbeat); err != nil {
+		return fmt.Errorf("heartbeat: %w", err)
+	}
+
+	// Apply control defaults and validate
+	if err := validateControl(&cfg.Control); err != nil {
+		return fmt.Errorf("control: %w", err)
 	}
 
 	return nil
@@ -419,6 +465,52 @@ func validateStripeWebhook(webhook *StripeWebhook) error {
 			if _, _, err := net.ParseCIDR(cidr); err != nil {
 				return fmt.Errorf("invalid CIDR notation in allowedIPRanges: %q", cidr)
 			}
+		}
+	}
+
+	return nil
+}
+
+// validateHeartbeat validates and applies defaults to heartbeat configuration
+func validateHeartbeat(hb *Heartbeat) error {
+	// Apply defaults
+	if hb.Interval == 0 {
+		hb.Interval = 30 * time.Second
+	}
+
+	// If heartbeat is enabled, validate required fields
+	if hb.Enabled {
+		if hb.Endpoint == "" {
+			return fmt.Errorf("endpoint must be set when heartbeat is enabled")
+		}
+		if hb.SignatureSecret == "" {
+			return fmt.Errorf("signatureSecret must be set when heartbeat is enabled")
+		}
+	}
+
+	return nil
+}
+
+// validateControl validates and applies defaults to control configuration
+func validateControl(ctrl *Control) error {
+	// Apply defaults
+	if ctrl.ListenAddr == "" {
+		ctrl.ListenAddr = ":8081"
+	}
+	if ctrl.MaxClockSkew == 0 {
+		ctrl.MaxClockSkew = 300 * time.Second // 5 minutes
+	}
+	if ctrl.NonceCache.Size == 0 {
+		ctrl.NonceCache.Size = 1000
+	}
+	if ctrl.NonceCache.TTL == 0 {
+		ctrl.NonceCache.TTL = 600 * time.Second // 10 minutes
+	}
+
+	// If control is enabled, validate required fields
+	if ctrl.Enabled {
+		if ctrl.SignatureSecret == "" {
+			return fmt.Errorf("signatureSecret must be set when control is enabled")
 		}
 	}
 
