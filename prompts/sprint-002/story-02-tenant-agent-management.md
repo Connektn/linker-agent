@@ -35,7 +35,7 @@ Agents must send periodic heartbeats containing health, queue, and mode data, an
 
 ### Security
 - Heartbeat messages signed with agent keypair.
-- Cloud commands signed with Connektn master key, verified by agent.
+- Cloud commands signed with Connektn API key, verified by agent.
 - Replay protection (nonce + timestamp).
 
 ---
