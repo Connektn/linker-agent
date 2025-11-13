@@ -1,0 +1,122 @@
+# Default values for connektn-stack (Lite profile)
+# This is a YAML-formatted file.
+
+# Global configuration shared across all components
+global:
+  # Namespace to deploy into (leave empty to use release namespace)
+  namespace: ""
+
+# Enable/disable components
+agent:
+  enabled: true
+
+gateway:
+  enabled: true
+
+# Connektn Agent configuration
+connektn-agent:
+  # Use Lite profile by default
+  profile: lite
+  mode: webhook
+  replicaCount: 1
+
+  image:
+    repository: ghcr.io/connektn/linker-agent
+    tag: ""  # Uses appVersion from Chart.yaml
+
+  # Persistence for WAL storage
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: ""
+
+  # Secrets (should be provided via --set or external secret manager)
+  secrets:
+    stripeApiKey: ""
+    stripeWebhookSecret: ""
+    tenantSalt: ""
+    connektnTenantKey: ""
+    # Recommended: use existing secret
+    existingSecret: ""
+
+  # Agent configuration
+  config:
+    privacy:
+      mode: "strict"
+      idMode: "strict"
+    export:
+      mode: "http"
+      http:
+        baseUrl: "https://api.connektn.io"
+
+  # Resources
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+  # Health probes
+  livenessProbe:
+    httpGet:
+      path: /healthz
+      port: http
+    initialDelaySeconds: 10
+    periodSeconds: 30
+
+  readinessProbe:
+    httpGet:
+      path: /readyz
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 10
+
+# Connektn Gateway configuration
+connektn-gateway:
+  type: nginx
+  replicaCount: 2
+
+  # Gateway routes to agent service
+  config:
+    upstream:
+      serviceName: connektn-stack-connektn-agent
+      port: 8080
+      namespace: ""  # Same namespace
+
+    tls:
+      enabled: true
+      clientCertRequired: false
+      existingSecret: ""
+
+    rateLimit:
+      enabled: true
+      requestsPerSecond: 10
+      burst: 20
+
+  # Service configuration
+  service:
+    type: LoadBalancer
+    port: 443
+    annotations: {}
+
+  # Resources
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+
+  # Anti-affinity to spread gateway pods
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: connektn-gateway
+          topologyKey: kubernetes.io/hostname

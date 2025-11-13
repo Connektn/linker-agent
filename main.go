@@ -25,8 +25,18 @@ func main() {
 	// Parse command-line flags
 	exportBillingOnly := flag.Bool("export-billing-only", false, "Export billing data only (skip matcher pipeline)")
 	webhookMode := flag.Bool("webhook", false, "Run in webhook server mode (listen for Stripe webhooks)")
+	healthCheck := flag.Bool("health-check", false, "Run health check and exit (for Docker HEALTHCHECK)")
 	configPath := flag.String("config", "config.yaml", "Path to configuration file")
 	flag.Parse()
+
+	// Handle health check flag (for Docker HEALTHCHECK)
+	if *healthCheck {
+		if err := performHealthCheck(); err != nil {
+			fmt.Fprintf(os.Stderr, "Health check failed: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 
 	ctx := context.Background()
 
@@ -360,7 +370,7 @@ func runBillingExportMode(ctx context.Context, cfg config.Config, tenantSalt []b
 	exp, err := exporter.New(exporter.Options{
 		Config:        cfg.Export,
 		TenantKey:     "test-tenant-key", // TODO: make configurable
-		QueueCapacity: 500, // Increased to handle larger datasets
+		QueueCapacity: 500,               // Increased to handle larger datasets
 	})
 	if err != nil {
 		log.Fatalf("Failed to create exporter: %v", err)
@@ -567,10 +577,25 @@ func runWebhookServer(ctx context.Context, cfg config.Config, tenantSalt []byte)
 	mux := http.NewServeMux()
 	mux.Handle(cfg.Sources.Stripe.Webhook.Path, handler)
 
-	// Add healthz endpoint
+	// Add liveness probe endpoint (always returns OK if server is running)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
+	})
+
+	// Add readiness probe endpoint (checks if worker is ready to process webhooks)
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		// Check if handler and exporter are ready
+		// For now, if the server is running, we're ready
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("READY"))
+	})
+
+	// Add metrics endpoint placeholder for Prometheus
+	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
+		// TODO: Implement Prometheus metrics in Story 3
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("# Prometheus metrics placeholder\n"))
 	})
 
 	server := &http.Server{
@@ -608,11 +633,35 @@ func runWebhookServer(ctx context.Context, cfg config.Config, tenantSalt []byte)
 	// Start HTTP server
 	log.Printf("Webhook server listening on %s", cfg.Server.Addr)
 	log.Printf("Webhook endpoint: %s", cfg.Sources.Stripe.Webhook.Path)
-	log.Printf("Healthz endpoint: /healthz")
+	log.Printf("Liveness probe: /healthz")
+	log.Printf("Readiness probe: /readyz")
+	log.Printf("Metrics endpoint: /metrics")
 
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("HTTP server error: %v", err)
 	}
 
 	log.Println("Webhook server stopped")
+}
+
+// performHealthCheck performs a simple health check by connecting to the local server.
+// This is used by Docker HEALTHCHECK and Kubernetes liveness probes.
+func performHealthCheck() error {
+	// Try to connect to the local server on default port
+	client := &http.Client{
+		Timeout: 2 * time.Second,
+	}
+
+	// Try localhost on port 8080 (default)
+	resp, err := client.Get("http://localhost:8080/healthz")
+	if err != nil {
+		return fmt.Errorf("health check failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("health check returned status %d", resp.StatusCode)
+	}
+
+	return nil
 }

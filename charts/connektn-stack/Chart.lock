@@ -1,0 +1,9 @@
+dependencies:
+- name: connektn-agent
+  repository: file://../connektn-agent
+  version: 0.1.0
+- name: connektn-gateway
+  repository: file://../connektn-gateway
+  version: 0.1.0
+digest: sha256:d03096814a9e54dd2b27343d5d9f696a9a170774f33cd639fc1c52add9dfe688
+generated: "2025-11-13T09:28:23.110294+01:00"

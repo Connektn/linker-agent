@@ -1,0 +1,66 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "connektn-agent.fullname" . }}
+  labels:
+    {{- include "connektn-agent.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    server:
+      addr: {{ .Values.config.server.addr | quote }}
+
+    privacy:
+      mode: {{ .Values.config.privacy.mode | quote }}
+      idMode: {{ .Values.config.privacy.idMode | quote }}
+      tenantSalt: "env:TENANT_SALT"
+      allowPassthroughExports: {{ .Values.config.privacy.allowPassthroughExports }}
+
+    sources:
+      stripe:
+        apiKey: "env:STRIPE_API_KEY"
+        account: {{ .Values.config.sources.stripe.account | quote }}
+        maxRequestsPerSecond: {{ .Values.config.sources.stripe.maxRequestsPerSecond }}
+        webhook:
+          enabled: {{ .Values.config.sources.stripe.webhook.enabled }}
+          path: {{ .Values.config.sources.stripe.webhook.path | quote }}
+          signingSecret: "env:STRIPE_WEBHOOK_SECRET"
+          maxSkew: {{ .Values.config.sources.stripe.webhook.maxSkew }}
+          retry:
+            maxAttempts: {{ .Values.config.sources.stripe.webhook.retry.maxAttempts }}
+            baseBackoff: {{ .Values.config.sources.stripe.webhook.retry.baseBackoff }}
+            maxBackoff: {{ .Values.config.sources.stripe.webhook.retry.maxBackoff }}
+
+    export:
+      mode: {{ .Values.config.export.mode | quote }}
+      {{- if or (eq .Values.config.export.mode "http") (eq .Values.config.export.mode "both") }}
+      http:
+        baseUrl: {{ .Values.config.export.http.baseUrl | quote }}
+        routes:
+          {{- range $key, $value := .Values.config.export.http.routes }}
+          {{ $key }}: {{ $value | quote }}
+          {{- end }}
+        headers:
+          authorizationEnv: "CONNEKTN_TENANT_KEY"
+        maxRetries: {{ .Values.config.export.http.maxRetries }}
+        batchSize: {{ .Values.config.export.http.batchSize }}
+        flushEvery: {{ .Values.config.export.http.flushEvery }}
+      {{- end }}
+      {{- if or (eq .Values.config.export.mode "file") (eq .Values.config.export.mode "both") }}
+      file:
+        paths:
+          {{- range $key, $value := .Values.config.export.file.paths }}
+          {{ $key }}: {{ $value | quote }}
+          {{- end }}
+      {{- end }}
+
+    matchers:
+      recipe:
+        name: {{ .Values.config.matchers.recipe.name | quote }}
+        version: {{ .Values.config.matchers.recipe.version | quote }}
+        weights:
+          {{- range $key, $value := .Values.config.matchers.recipe.weights }}
+          {{ $key }}: {{ $value }}
+          {{- end }}
+        threshold: {{ .Values.config.matchers.recipe.threshold }}
+        temporalWindowSec: {{ .Values.config.matchers.recipe.temporalWindowSec }}
+        skuOverlapMin: {{ .Values.config.matchers.recipe.skuOverlapMin }}

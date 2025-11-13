@@ -1,0 +1,155 @@
+# Connektn Stack - AWS EKS Example (HA Profile)
+# Production-grade deployment on Amazon EKS with Kafka backend
+
+agent:
+  enabled: true
+
+gateway:
+  enabled: true
+
+connektn-agent:
+  profile: ha
+  mode: webhook
+  replicaCount: 3
+
+  image:
+    repository: ghcr.io/connektn/linker-agent
+    tag: ""  # Use chart appVersion
+
+  # Enable autoscaling
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+  # No persistence in HA mode (uses Kafka)
+  persistence:
+    enabled: false
+
+  # Kafka backend - assumes MSK (Managed Streaming for Kafka) or self-hosted Kafka
+  queue:
+    type: kafka
+    kafka:
+      brokers:
+        - b-1.msk-cluster.kafka.us-east-1.amazonaws.com:9092
+        - b-2.msk-cluster.kafka.us-east-1.amazonaws.com:9092
+        - b-3.msk-cluster.kafka.us-east-1.amazonaws.com:9092
+      topics:
+        events: "connektn-events"
+        dlq: "connektn-dlq"
+      consumerGroup: "connektn-agents"
+      sasl:
+        enabled: true
+        mechanism: "SCRAM-SHA-512"
+        # Credentials loaded from secret
+      tls:
+        enabled: true
+
+  # Use external secrets with AWS Secrets Manager
+  secrets:
+    existingSecret: "connektn-agent-secrets"
+
+  config:
+    privacy:
+      mode: "strict"
+      idMode: "strict"
+    export:
+      mode: "http"
+      http:
+        baseUrl: "https://api.connektn.io"
+        maxRetries: 5
+        batchSize: 100
+        flushEvery: 3s
+
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+
+  # Spread pods across AZs
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: connektn-agent
+        topologyKey: topology.kubernetes.io/zone
+
+  # Tolerate spot instances
+  tolerations:
+  - key: "spot"
+    operator: "Equal"
+    value: "true"
+    effect: "NoSchedule"
+
+  # Enable Prometheus monitoring
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+    labels:
+      prometheus: kube-prometheus
+
+connektn-gateway:
+  type: nginx
+  replicaCount: 3
+
+  # Enable autoscaling
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+
+  config:
+    upstream:
+      serviceName: connektn-stack-connektn-agent
+      port: 8080
+
+    tls:
+      enabled: true
+      clientCertRequired: false
+      # Use cert-manager with Let's Encrypt
+      certManager:
+        enabled: true
+        issuerRef:
+          name: letsencrypt-prod
+          kind: ClusterIssuer
+
+    rateLimit:
+      enabled: true
+      requestsPerSecond: 100
+      burst: 200
+
+  # NLB for production
+  service:
+    type: LoadBalancer
+    port: 443
+    annotations:
+      service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+      service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+      service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+      service.beta.kubernetes.io/aws-load-balancer-ssl-ports: "443"
+      # For internal access only, use:
+      # service.beta.kubernetes.io/aws-load-balancer-scheme: "internal"
+
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+  # Spread pods across AZs
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: connektn-gateway
+        topologyKey: topology.kubernetes.io/zone
