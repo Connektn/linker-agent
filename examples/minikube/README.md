@@ -21,7 +21,24 @@ minikube start --memory 4096 --cpus 2
 minikube addons enable metrics-server
 ```
 
-### 2. Create Secrets
+### 2. Build and Load Docker Image
+
+Since the Connektn images aren't published to a registry yet, you need to build them locally and load them into Minikube:
+
+```bash
+# Point your shell to Minikube's Docker daemon
+eval $(minikube docker-env)
+
+# Build the image directly in Minikube's Docker (from repository root)
+docker build -t ghcr.io/connektn/linker-agent:latest .
+
+# Verify the image is available
+docker images | grep linker-agent
+```
+
+**Important**: Keep this terminal session open, or re-run `eval $(minikube docker-env)` in any new terminal where you need to interact with Minikube's Docker.
+
+### 3. Create Secrets
 
 ```bash
 # Create namespace
@@ -35,33 +52,55 @@ kubectl create secret generic connektn-secrets \
   -n connektn
 ```
 
-### 3. Install Connektn Stack
+### 4. Install Connektn Stack
 
 ```bash
 # From repository root
 helm install connektn ./charts/connektn-stack \
   --namespace connektn \
   --values examples/minikube/values-lite.yaml \
-  --set connektn-agent.secrets.existingSecret=connektn-secrets
+  --set connektn-agent.secrets.existingSecret=connektn-secrets \
+  --set connektn-agent.image.pullPolicy=Never
 ```
 
-### 4. Access the Gateway
+**Note**: The `--set connektn-agent.image.pullPolicy=Never` flag tells Kubernetes to use the local image and never try to pull from a registry.
+
+### 5. Wait for Pods to be Ready
 
 ```bash
-# Get the NodePort URL
-minikube service connektn-connektn-gateway -n connektn --url
+# Watch pods until they're running
+kubectl get pods -n connektn -w
 
-# Or use port-forward
+# Once both pods show RUNNING and READY 1/1, press Ctrl+C to exit watch mode
+```
+
+### 6. Access the Gateway
+
+The recommended way to access the gateway on Minikube (macOS with Docker driver) is using `kubectl port-forward`:
+
+```bash
+# In a dedicated terminal, run:
 kubectl port-forward svc/connektn-connektn-gateway 8080:8080 -n connektn
+
+# Keep this terminal open while testing
+```
+
+Alternatively, you can use `minikube service` (requires keeping terminal open):
+
+```bash
+# This creates a tunnel and must stay running
+minikube service connektn-connektn-gateway -n connektn
 ```
 
 ## Testing
 
 ### Test Health Endpoints
 
+In a **new terminal** (while port-forward is running in another terminal):
+
 ```bash
-# Get the URL
-export GATEWAY_URL=$(minikube service connektn-connektn-gateway -n connektn --url)
+# Set the gateway URL
+export GATEWAY_URL=http://localhost:8080
 
 # Test health
 curl $GATEWAY_URL/healthz
@@ -69,6 +108,10 @@ curl $GATEWAY_URL/healthz
 # Test readiness
 curl $GATEWAY_URL/readyz
 ```
+
+Expected responses:
+- `/healthz` should return `200 OK`
+- `/readyz` should return `200 OK` (once agent is connected)
 
 ### Configure Stripe Webhook
 
@@ -112,11 +155,42 @@ cat /var/lib/connektn/wal/billing.jsonl
 
 ## Troubleshooting
 
+### ImagePullBackOff Error
+
+If you see `ImagePullBackOff` on the agent pod:
+
+```bash
+# Make sure you built the image in Minikube's Docker
+eval $(minikube docker-env)
+docker images | grep linker-agent
+
+# If the image is missing, rebuild it
+docker build -t ghcr.io/connektn/linker-agent:latest .
+
+# Then restart the pod
+kubectl rollout restart deployment/connektn-connektn-agent -n connektn
+```
+
 ### Pod not starting
 
 ```bash
 kubectl describe pod -l app.kubernetes.io/name=connektn-agent -n connektn
 kubectl logs -l app.kubernetes.io/name=connektn-agent -n connektn
+```
+
+### Gateway CrashLoopBackOff
+
+The gateway depends on the agent being healthy. Check agent status first:
+
+```bash
+# Check if agent is running
+kubectl get pods -n connektn
+
+# Check agent logs
+kubectl logs -l app.kubernetes.io/name=connektn-agent -n connektn
+
+# Check gateway logs
+kubectl logs -l app.kubernetes.io/name=connektn-gateway -n connektn
 ```
 
 ### PVC not binding
@@ -152,9 +226,14 @@ kubectl delete pvc connektn-connektn-agent -n connektn
 # Delete namespace
 kubectl delete namespace connektn
 
+# Optional: Reset Docker environment to your local Docker
+eval $(minikube docker-env -u)
+
 # Stop Minikube
 minikube stop
 ```
+
+**Note**: Use `eval $(minikube docker-env -u)` to point your shell back to your local Docker daemon if you want to build images for non-Minikube use.
 
 ## Next Steps
 
