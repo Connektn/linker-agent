@@ -1,6 +1,9 @@
 # Connektn Linker Agent Makefile
 .DEFAULT_GOAL := help
 
+# Export all variables to sub-processes (including shell scripts)
+.EXPORT_ALL_VARIABLES:
+
 # Variables
 BINARY_NAME := linker-agent
 IMAGE_NAME := ghcr.io/connektn/linker-agent:latest
