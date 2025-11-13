@@ -1,8 +1,8 @@
 # Connektn Linker Agent Makefile
 .DEFAULT_GOAL := help
 
-# Export all variables to sub-processes (including shell scripts)
-.EXPORT_ALL_VARIABLES:
+# Use SHELL to ensure environment is passed through
+SHELL := /bin/bash
 
 # Variables
 BINARY_NAME := linker-agent
@@ -27,67 +27,67 @@ help: ## Display this help
 
 .PHONY: build
 build: ## Build the Go binary
-	@echo "$(COLOR_GREEN)Building $(BINARY_NAME)...$(COLOR_RESET)"
+	@echo -e "$(COLOR_GREEN)Building $(BINARY_NAME)...$(COLOR_RESET)"
 	$(GO) build -o $(BINARY_NAME) main.go
-	@echo "$(COLOR_GREEN)✓ Build complete: $(BINARY_NAME)$(COLOR_RESET)"
+	@echo -e "$(COLOR_GREEN)✓ Build complete: $(BINARY_NAME)$(COLOR_RESET)"
 
 .PHONY: run
 run: ## Run the agent locally (requires STRIPE_API_KEY)
-	@echo "$(COLOR_GREEN)Running $(BINARY_NAME)...$(COLOR_RESET)"
+	@echo -e "$(COLOR_GREEN)Running $(BINARY_NAME)...$(COLOR_RESET)"
 	@./run.sh
 
 .PHONY: test
 test: ## Run tests
-	@echo "$(COLOR_GREEN)Running tests...$(COLOR_RESET)"
+	@echo -e "$(COLOR_GREEN)Running tests...$(COLOR_RESET)"
 	$(GO) test -v ./...
 
 .PHONY: test-coverage
 test-coverage: ## Run tests with coverage
-	@echo "$(COLOR_GREEN)Running tests with coverage...$(COLOR_RESET)"
+	@echo -e "$(COLOR_GREEN)Running tests with coverage...$(COLOR_RESET)"
 	$(GO) test -v -coverprofile=coverage.out ./...
 	$(GO) tool cover -html=coverage.out -o coverage.html
-	@echo "$(COLOR_GREEN)✓ Coverage report: coverage.html$(COLOR_RESET)"
+	@echo -e "$(COLOR_GREEN)✓ Coverage report: coverage.html$(COLOR_RESET)"
 
 .PHONY: fmt
 fmt: ## Format Go code
-	@echo "$(COLOR_GREEN)Formatting code...$(COLOR_RESET)"
+	@echo -e "$(COLOR_GREEN)Formatting code...$(COLOR_RESET)"
 	$(GO) fmt ./...
 
 .PHONY: vet
 vet: ## Run go vet
-	@echo "$(COLOR_GREEN)Running go vet...$(COLOR_RESET)"
+	@echo -e "$(COLOR_GREEN)Running go vet...$(COLOR_RESET)"
 	$(GO) vet ./...
 
 .PHONY: lint
 lint: vet fmt ## Run linters (fmt + vet)
-	@echo "$(COLOR_GREEN)✓ Linting complete$(COLOR_RESET)"
+	@echo -e "$(COLOR_GREEN)✓ Linting complete$(COLOR_RESET)"
 
 .PHONY: clean
 clean: ## Remove build artifacts
-	@echo "$(COLOR_GREEN)Cleaning build artifacts...$(COLOR_RESET)"
+	@echo -e "$(COLOR_GREEN)Cleaning build artifacts...$(COLOR_RESET)"
 	rm -f $(BINARY_NAME)
 	rm -f coverage.out coverage.html
 	rm -rf seed_reports
-	@echo "$(COLOR_GREEN)✓ Clean complete$(COLOR_RESET)"
+	@echo -e "$(COLOR_GREEN)✓ Clean complete$(COLOR_RESET)"
 
 ##@ Docker
 
 .PHONY: docker-build
 docker-build: ## Build Docker image
-	@echo "$(COLOR_GREEN)Building Docker image...$(COLOR_RESET)"
+	@echo -e "$(COLOR_GREEN)Building Docker image...$(COLOR_RESET)"
 	docker build -t $(IMAGE_NAME) .
-	@echo "$(COLOR_GREEN)✓ Docker image built: $(IMAGE_NAME)$(COLOR_RESET)"
+	@echo -e "$(COLOR_GREEN)✓ Docker image built: $(IMAGE_NAME)$(COLOR_RESET)"
 
 ##@ Minikube
 
 .PHONY: minikube-up
 minikube-up: ## Start Minikube and deploy Connektn stack (requires env vars)
-	@echo "$(COLOR_GREEN)Setting up Connektn on Minikube...$(COLOR_RESET)"
+	@echo -e "$(COLOR_GREEN)Setting up Connektn on Minikube...$(COLOR_RESET)"
 	@./scripts/minikube-setup.sh
 
 .PHONY: minikube-down
 minikube-down: ## Remove Connektn from Minikube
-	@echo "$(COLOR_YELLOW)Cleaning up Connektn from Minikube...$(COLOR_RESET)"
+	@echo -e "$(COLOR_YELLOW)Cleaning up Connektn from Minikube...$(COLOR_RESET)"
 	@./scripts/minikube-cleanup.sh
 
 .PHONY: minikube-restart
@@ -95,18 +95,18 @@ minikube-restart: minikube-down minikube-up ## Restart Minikube deployment
 
 .PHONY: minikube-status
 minikube-status: ## Show Minikube deployment status
-	@echo "$(COLOR_BLUE)Minikube Status:$(COLOR_RESET)"
+	@echo -e "$(COLOR_BLUE)Minikube Status:$(COLOR_RESET)"
 	@minikube status || echo "Minikube not running"
 	@echo ""
-	@echo "$(COLOR_BLUE)Pods:$(COLOR_RESET)"
+	@echo -e "$(COLOR_BLUE)Pods:$(COLOR_RESET)"
 	@kubectl get pods -n $(MINIKUBE_NAMESPACE) || echo "Namespace not found"
 	@echo ""
-	@echo "$(COLOR_BLUE)Services:$(COLOR_RESET)"
+	@echo -e "$(COLOR_BLUE)Services:$(COLOR_RESET)"
 	@kubectl get svc -n $(MINIKUBE_NAMESPACE) || echo "Namespace not found"
 
 .PHONY: minikube-logs
 minikube-logs: ## Show logs from Minikube pods
-	@echo "$(COLOR_BLUE)Select which logs to view:$(COLOR_RESET)"
+	@echo -e "$(COLOR_BLUE)Select which logs to view:$(COLOR_RESET)"
 	@echo "  1) Agent logs"
 	@echo "  2) Gateway logs"
 	@echo "  3) Both (follow mode)"
@@ -120,13 +120,13 @@ minikube-logs: ## Show logs from Minikube pods
 
 .PHONY: minikube-port-forward
 minikube-port-forward: ## Port-forward the gateway (runs in foreground)
-	@echo "$(COLOR_GREEN)Port-forwarding gateway to http://localhost:8080$(COLOR_RESET)"
-	@echo "$(COLOR_YELLOW)Press Ctrl+C to stop$(COLOR_RESET)"
+	@echo -e "$(COLOR_GREEN)Port-forwarding gateway to http://localhost:8080$(COLOR_RESET)"
+	@echo -e "$(COLOR_YELLOW)Press Ctrl+C to stop$(COLOR_RESET)"
 	@kubectl port-forward svc/connektn-connektn-gateway 8080:8080 -n $(MINIKUBE_NAMESPACE)
 
 .PHONY: minikube-shell-agent
 minikube-shell-agent: ## Debug shell into agent pod (distroless, uses kubectl debug)
-	@echo "$(COLOR_BLUE)Launching debug shell for agent pod...$(COLOR_RESET)"
+	@echo -e "$(COLOR_BLUE)Launching debug shell for agent pod...$(COLOR_RESET)"
 	@AGENT_POD=$$(kubectl get pod -n $(MINIKUBE_NAMESPACE) -l app.kubernetes.io/name=connektn-agent -o jsonpath='{.items[0].metadata.name}'); \
 	echo "$(COLOR_GREEN)Debug pod will have access to agent filesystem at /proc/1/root/$(COLOR_RESET)"; \
 	kubectl debug -it -n $(MINIKUBE_NAMESPACE) $$AGENT_POD --image=busybox:1.28 --target=agent
@@ -135,39 +135,39 @@ minikube-shell-agent: ## Debug shell into agent pod (distroless, uses kubectl de
 
 .PHONY: seed-stripe
 seed-stripe: ## Seed Stripe with test data (requires STRIPE_API_KEY)
-	@echo "$(COLOR_GREEN)Seeding Stripe with test data...$(COLOR_RESET)"
+	@echo -e "$(COLOR_GREEN)Seeding Stripe with test data...$(COLOR_RESET)"
 	@./scripts/seed_stripe_test_data.sh
 
 ##@ Utilities
 
 .PHONY: check-env
 check-env: ## Check required environment variables
-	@echo "$(COLOR_BLUE)Checking environment variables...$(COLOR_RESET)"
-	@if [ -z "$$STRIPE_API_KEY" ]; then \
-		echo "$(COLOR_YELLOW)⚠ STRIPE_API_KEY not set$(COLOR_RESET)"; \
+	@echo -e "$(COLOR_BLUE)Checking environment variables...$(COLOR_RESET)"
+	@if [ -z "$(STRIPE_API_KEY)" ]; then \
+		echo -e "$(COLOR_YELLOW)⚠ STRIPE_API_KEY not set$(COLOR_RESET)"; \
 	else \
-		echo "$(COLOR_GREEN)✓ STRIPE_API_KEY is set$(COLOR_RESET)"; \
+		echo -e "$(COLOR_GREEN)✓ STRIPE_API_KEY is set$(COLOR_RESET)"; \
 	fi
-	@if [ -z "$$STRIPE_WEBHOOK_SECRET" ]; then \
-		echo "$(COLOR_YELLOW)⚠ STRIPE_WEBHOOK_SECRET not set$(COLOR_RESET)"; \
+	@if [ -z "$(STRIPE_WEBHOOK_SECRET)" ]; then \
+		echo -e "$(COLOR_YELLOW)⚠ STRIPE_WEBHOOK_SECRET not set$(COLOR_RESET)"; \
 	else \
-		echo "$(COLOR_GREEN)✓ STRIPE_WEBHOOK_SECRET is set$(COLOR_RESET)"; \
+		echo -e "$(COLOR_GREEN)✓ STRIPE_WEBHOOK_SECRET is set$(COLOR_RESET)"; \
 	fi
-	@if [ -z "$$TENANT_SALT" ]; then \
-		echo "$(COLOR_YELLOW)⚠ TENANT_SALT not set$(COLOR_RESET)"; \
+	@if [ -z "$(TENANT_SALT)" ]; then \
+		echo -e "$(COLOR_YELLOW)⚠ TENANT_SALT not set$(COLOR_RESET)"; \
 	else \
-		echo "$(COLOR_GREEN)✓ TENANT_SALT is set$(COLOR_RESET)"; \
+		echo -e "$(COLOR_GREEN)✓ TENANT_SALT is set$(COLOR_RESET)"; \
 	fi
 
 .PHONY: deps
 deps: ## Download Go dependencies
-	@echo "$(COLOR_GREEN)Downloading dependencies...$(COLOR_RESET)"
+	@echo -e "$(COLOR_GREEN)Downloading dependencies...$(COLOR_RESET)"
 	$(GO) mod download
-	@echo "$(COLOR_GREEN)✓ Dependencies downloaded$(COLOR_RESET)"
+	@echo -e "$(COLOR_GREEN)✓ Dependencies downloaded$(COLOR_RESET)"
 
 .PHONY: deps-update
 deps-update: ## Update Go dependencies
-	@echo "$(COLOR_GREEN)Updating dependencies...$(COLOR_RESET)"
+	@echo -e "$(COLOR_GREEN)Updating dependencies...$(COLOR_RESET)"
 	$(GO) get -u ./...
 	$(GO) mod tidy
-	@echo "$(COLOR_GREEN)✓ Dependencies updated$(COLOR_RESET)"
+	@echo -e "$(COLOR_GREEN)✓ Dependencies updated$(COLOR_RESET)"

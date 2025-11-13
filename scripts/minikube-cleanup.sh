@@ -47,6 +47,17 @@ fi
 log "✅ Minikube is running"
 
 # -------------------------------------------------------------------
+# Stop port-forward
+# -------------------------------------------------------------------
+
+log "🔌 Stopping port-forward..."
+if pkill -f "kubectl port-forward.*connektn-connektn-gateway" 2>/dev/null; then
+    log "✅ Port-forward stopped"
+else
+    log "⚡ No port-forward running"
+fi
+
+# -------------------------------------------------------------------
 # Uninstall Helm release
 # -------------------------------------------------------------------
 

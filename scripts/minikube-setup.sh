@@ -21,7 +21,7 @@ CPUS="${MINIKUBE_CPUS:-2}"
 
 log() { printf "\n[+] %s\n" "$*"; }
 warn() { printf "\n[!] %s\n" "$*" >&2; }
-error() { printf "\n[✗] %s\n" "$*" >&2; exit 1; }
+error() { printf "\n[✗] %b\n" "$*" >&2; exit 1; }
 
 # -------------------------------------------------------------------
 # Pre-flight checks
@@ -79,16 +79,19 @@ fi
 
 log "🐳 Building Docker image in Minikube's Docker environment..."
 
-# Point shell to Minikube's Docker daemon
+# Export Minikube's Docker environment variables
 eval "$(minikube docker-env)"
 
-# Build image (from repository root)
-docker build -t "$IMAGE_NAME" .
+log "Docker host: ${DOCKER_HOST}"
 
-# Verify image exists
-if ! docker images | grep -q linker-agent; then
-    error "Failed to build Docker image"
+# Build image (from repository root)
+if ! docker build -t "$IMAGE_NAME" .; then
+    error "Failed to build Docker image in Minikube's Docker"
 fi
+
+# Verify image exists in Minikube's Docker
+log "Images in Minikube's Docker:"
+docker images | grep linker-agent || error "Docker image not found in Minikube's Docker after build"
 
 log "✅ Docker image built successfully"
 
@@ -169,30 +172,56 @@ echo ""
 kubectl get pods -n "$NAMESPACE"
 
 # -------------------------------------------------------------------
+# Set up port-forward in background
+# -------------------------------------------------------------------
+
+log "🔌 Setting up port-forward to gateway..."
+
+# Kill any existing port-forward on 8080
+pkill -f "kubectl port-forward.*connektn-connektn-gateway" 2>/dev/null || true
+
+# Start port-forward in background
+kubectl port-forward svc/connektn-connektn-gateway 8080:8080 -n "$NAMESPACE" >/dev/null 2>&1 &
+PORT_FORWARD_PID=$!
+
+# Wait a moment for port-forward to establish
+sleep 2
+
+# Check if port-forward is running
+if ! kill -0 $PORT_FORWARD_PID 2>/dev/null; then
+    warn "Port-forward failed to start. You can manually start it with:"
+    warn "  kubectl port-forward svc/connektn-connektn-gateway 8080:8080 -n $NAMESPACE"
+else
+    log "✅ Port-forward running in background (PID: $PORT_FORWARD_PID)"
+    echo "   Gateway available at: http://localhost:8080"
+fi
+
+# -------------------------------------------------------------------
 # Success message with next steps
 # -------------------------------------------------------------------
 
 echo ""
 log "✅ Connektn stack is deployed and running!"
 echo ""
-echo "📋 Next steps:"
+echo "📋 Quick test:"
 echo ""
-echo "1. Port-forward the gateway (in a separate terminal):"
-echo "   kubectl port-forward svc/connektn-connektn-gateway 8080:8080 -n $NAMESPACE"
-echo ""
-echo "2. Test the health endpoint:"
 echo "   export GATEWAY_URL=http://localhost:8080"
 echo "   curl \$GATEWAY_URL/healthz"
 echo ""
-echo "3. View logs:"
-echo "   Agent:   kubectl logs -f deployment/connektn-connektn-agent -n $NAMESPACE"
-echo "   Gateway: kubectl logs -f deployment/connektn-connektn-gateway -n $NAMESPACE"
+echo "📚 Useful commands:"
 echo ""
-echo "4. Configure Stripe webhooks (optional):"
-echo "   stripe listen --forward-to \$GATEWAY_URL/webhooks/stripe"
+echo "   View logs:"
+echo "     Agent:   kubectl logs -f deployment/connektn-connektn-agent -n $NAMESPACE"
+echo "     Gateway: kubectl logs -f deployment/connektn-connektn-gateway -n $NAMESPACE"
 echo ""
-echo "5. Check exported data (see README.md for details):"
-echo "   kubectl debug -it -n $NAMESPACE <agent-pod> --image=busybox:1.28 --target=agent"
+echo "   Configure Stripe webhooks:"
+echo "     stripe listen --forward-to http://localhost:8080/webhooks/stripe"
 echo ""
-echo "🧹 To cleanup, run: make minikube-down"
+echo "   Check exported data:"
+echo "     kubectl debug -it -n $NAMESPACE <agent-pod> --image=busybox:1.28 --target=agent"
+echo ""
+echo "   Stop port-forward:"
+echo "     kill $PORT_FORWARD_PID"
+echo ""
+echo "🧹 To cleanup everything: make minikube-down"
 echo ""
