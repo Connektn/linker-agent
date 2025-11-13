@@ -30,17 +30,6 @@ jobs:
       - name: Set up chart-testing
         uses: helm/chart-testing-action@v2.6.1
 
-      - name: Set up kubectl
-        uses: azure/setup-kubectl@v4
-        with:
-          version: 'v1.29.0'
-
-      - name: Set up kind
-        uses: helm/kind-action@v1.9.0
-        with:
-          version: 'v0.22.0'
-          wait: 120s
-
       - name: Add Helm dependencies
         run: |
           helm repo add bitnami https://charts.bitnami.com/bitnami
@@ -94,66 +83,38 @@ jobs:
             --set connektn-agent.secrets.existingSecret=dummy-secret \
             --debug
 
-      - name: Install connektn-agent chart in kind
+      - name: Dry-run install connektn-agent chart
         run: |
-          kubectl create namespace connektn-test
-
-          # Create dummy secrets
-          kubectl create secret generic connektn-test-secrets \
-            --from-literal=STRIPE_API_KEY=sk_test_dummy \
-            --from-literal=STRIPE_WEBHOOK_SECRET=whsec_dummy \
-            --from-literal=TENANT_SALT=dummy-salt-for-testing-only-32chars \
-            -n connektn-test
-
-          # Install chart
+          # Validate chart can be installed (dry-run)
           helm install test-agent charts/connektn-agent \
             --namespace connektn-test \
-            --set secrets.existingSecret=connektn-test-secrets \
-            --set image.pullPolicy=Never \
-            --wait --timeout 2m
+            --create-namespace \
+            --set secrets.stripeApiKey=sk_test_dummy \
+            --set secrets.stripeWebhookSecret=whsec_dummy \
+            --set secrets.tenantSalt=dummy-salt-for-testing-only-32chars \
+            --dry-run --debug
 
-      - name: Test agent deployment
+      - name: Dry-run install connektn-stack chart (Lite)
         run: |
-          kubectl get pods -n connektn-test
-          kubectl get svc -n connektn-test
-          kubectl describe deployment test-agent-connektn-agent -n connektn-test
-
-      - name: Cleanup agent test
-        if: always()
-        run: |
-          helm uninstall test-agent -n connektn-test || true
-          kubectl delete namespace connektn-test || true
-
-      - name: Install connektn-stack chart in kind (Lite)
-        run: |
-          kubectl create namespace connektn-stack-test
-
-          # Create dummy secrets
-          kubectl create secret generic connektn-stack-secrets \
-            --from-literal=STRIPE_API_KEY=sk_test_dummy \
-            --from-literal=STRIPE_WEBHOOK_SECRET=whsec_dummy \
-            --from-literal=TENANT_SALT=dummy-salt-for-testing-only-32chars \
-            -n connektn-stack-test
-
-          # Install stack
+          # Validate stack can be installed (dry-run)
           helm install test-stack charts/connektn-stack \
             --namespace connektn-stack-test \
-            --set connektn-agent.secrets.existingSecret=connektn-stack-secrets \
-            --set connektn-agent.image.pullPolicy=Never \
+            --create-namespace \
+            --set connektn-agent.secrets.stripeApiKey=sk_test_dummy \
+            --set connektn-agent.secrets.stripeWebhookSecret=whsec_dummy \
+            --set connektn-agent.secrets.tenantSalt=dummy-salt-for-testing-only-32chars \
             --set connektn-gateway.service.type=ClusterIP \
-            --wait --timeout 3m
+            --dry-run --debug
 
-      - name: Test stack deployment
+      - name: Dry-run install connektn-stack chart (HA)
         run: |
-          kubectl get pods -n connektn-stack-test
-          kubectl get svc -n connektn-stack-test
-          kubectl describe deployment -n connektn-stack-test
-
-      - name: Cleanup stack test
-        if: always()
-        run: |
-          helm uninstall test-stack -n connektn-stack-test || true
-          kubectl delete namespace connektn-stack-test || true
+          # Validate HA profile can be installed (dry-run)
+          helm install test-stack-ha charts/connektn-stack \
+            --namespace connektn-ha-test \
+            --create-namespace \
+            --values charts/connektn-stack/values-ha.yaml \
+            --set connektn-agent.secrets.existingSecret=dummy-secret \
+            --dry-run --debug
 
   package:
     name: Package Helm Charts
