@@ -39,7 +39,7 @@ func main() {
 
 	// Generate or load agent ID
 	generator := agentid.NewGenerator("/tmp/test-agent-id")
-	agentID, err := generator.Get()
+	agentID, err := generator.GetOrCreate()
 	if err != nil {
 		log.Fatalf("Failed to get agent ID: %v", err)
 	}
@@ -95,7 +95,12 @@ func main() {
 
 	// Register command handlers
 	handlers := control.NewHandlers(a, logger)
-	handlers.RegisterAll(srv.Handler)
+	// Register each command with the server
+	srv.RegisterCommand(control.CommandStop, handlers.HandleStop)
+	srv.RegisterCommand(control.CommandStart, handlers.HandleStart)
+	srv.RegisterCommand(control.CommandRestart, handlers.HandleRestart)
+	srv.RegisterCommand(control.CommandSwitchMode, handlers.HandleSwitchMode)
+	srv.RegisterCommand(control.CommandUpgrade, handlers.HandleUpgrade)
 
 	// Set shutdown function
 	a.SetShutdownFunc(cancel)
