@@ -1,0 +1,28 @@
+apiVersion: v2
+name: connektn-stack
+description: Complete Connektn stack - Agent, Gateway, and optional message queue
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - connektn
+  - billing
+  - privacy
+  - stripe
+  - cdp
+  - stack
+home: https://github.com/connektn/linker-agent
+sources:
+  - https://github.com/connektn/linker-agent
+maintainers:
+  - name: Tomas Zezula
+    email: tomas@connektn.io
+dependencies:
+  - name: connektn-agent
+    version: "0.1.0"
+    repository: "file://../connektn-agent"
+    condition: agent.enabled
+  - name: connektn-gateway
+    version: "0.1.0"
+    repository: "file://../connektn-gateway"
+    condition: gateway.enabled

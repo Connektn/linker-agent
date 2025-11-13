@@ -1,0 +1,18 @@
+apiVersion: v2
+name: connektn-agent
+description: Connektn Linker Agent - Privacy-preserving billing data reconciliation
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - connektn
+  - billing
+  - privacy
+  - stripe
+  - cdp
+home: https://github.com/connektn/linker-agent
+sources:
+  - https://github.com/connektn/linker-agent
+maintainers:
+  - name: Tomas Zezula
+    email: tomas@connektn.io

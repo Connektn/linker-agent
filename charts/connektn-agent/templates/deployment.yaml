@@ -1,0 +1,167 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "connektn-agent.fullname" . }}
+  labels:
+    {{- include "connektn-agent.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "connektn-agent.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "connektn-agent.selectorLabels" . | nindent 8 }}
+        connektn.io/profile: {{ .Values.profile }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "connektn-agent.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+      - name: agent
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 10 }}
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        {{- if eq .Values.mode "webhook" }}
+        args:
+          - "--webhook"
+          - "--config"
+          - "/etc/connektn/config.yaml"
+        {{- else if eq .Values.mode "export-billing" }}
+        args:
+          - "--export-billing-only"
+          - "--config"
+          - "/etc/connektn/config.yaml"
+        {{- else }}
+        args:
+          - "--config"
+          - "/etc/connektn/config.yaml"
+        {{- end }}
+        env:
+        - name: STRIPE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "connektn-agent.secretName" . }}
+              key: STRIPE_API_KEY
+        - name: STRIPE_WEBHOOK_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "connektn-agent.secretName" . }}
+              key: STRIPE_WEBHOOK_SECRET
+        - name: TENANT_SALT
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "connektn-agent.secretName" . }}
+              key: TENANT_SALT
+        {{- if .Values.secrets.connektnTenantKey }}
+        - name: CONNEKTN_TENANT_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "connektn-agent.secretName" . }}
+              key: CONNEKTN_TENANT_KEY
+              optional: true
+        {{- end }}
+        {{- if eq .Values.queue.type "kafka" }}
+        - name: KAFKA_BROKERS
+          value: {{ join "," .Values.queue.kafka.brokers | quote }}
+        {{- if .Values.queue.kafka.sasl.enabled }}
+        - name: KAFKA_SASL_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "connektn-agent.secretName" . }}
+              key: KAFKA_SASL_USERNAME
+        - name: KAFKA_SASL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "connektn-agent.secretName" . }}
+              key: KAFKA_SASL_PASSWORD
+        {{- end }}
+        {{- end }}
+        {{- if eq .Values.queue.type "rabbitmq" }}
+        - name: RABBITMQ_HOST
+          value: {{ .Values.queue.rabbitmq.host | quote }}
+        - name: RABBITMQ_PORT
+          value: {{ .Values.queue.rabbitmq.port | quote }}
+        - name: RABBITMQ_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "connektn-agent.secretName" . }}
+              key: RABBITMQ_USERNAME
+        - name: RABBITMQ_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "connektn-agent.secretName" . }}
+              key: RABBITMQ_PASSWORD
+        {{- end }}
+        ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+        {{- if eq .Values.mode "webhook" }}
+        livenessProbe:
+          {{- toYaml .Values.livenessProbe | nindent 10 }}
+        readinessProbe:
+          {{- toYaml .Values.readinessProbe | nindent 10 }}
+        {{- end }}
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        volumeMounts:
+        - name: config
+          mountPath: /etc/connektn
+          readOnly: true
+        {{- if and .Values.persistence.enabled (eq .Values.profile "lite") }}
+        - name: wal-storage
+          mountPath: {{ .Values.persistence.mountPath }}
+        {{- end }}
+        {{- if .Values.mtls.enabled }}
+        - name: mtls-certs
+          mountPath: /etc/connektn/certs
+          readOnly: true
+        {{- end }}
+        # Add tmp directory for non-root filesystem
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: config
+        configMap:
+          name: {{ include "connektn-agent.fullname" . }}
+      {{- if and .Values.persistence.enabled (eq .Values.profile "lite") }}
+      - name: wal-storage
+        persistentVolumeClaim:
+          claimName: {{ include "connektn-agent.pvcName" . }}
+      {{- end }}
+      {{- if .Values.mtls.enabled }}
+      - name: mtls-certs
+        secret:
+          secretName: {{ .Values.mtls.existingSecret | default (printf "%s-mtls" (include "connektn-agent.fullname" .)) }}
+      {{- end }}
+      - name: tmp
+        emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # Graceful shutdown: allow time for WAL flush
+      terminationGracePeriodSeconds: 30

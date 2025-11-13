@@ -1,0 +1,154 @@
+# Values for connektn-stack (HA profile)
+# This file demonstrates a high-availability deployment with Kafka backend
+
+# Enable all components
+agent:
+  enabled: true
+
+gateway:
+  enabled: true
+
+# Connektn Agent configuration (HA profile)
+connektn-agent:
+  # Use HA profile
+  profile: ha
+  mode: webhook
+  replicaCount: 3
+
+  # Enable autoscaling
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+  # No persistence needed in HA mode (uses Kafka)
+  persistence:
+    enabled: false
+
+  # Queue configuration - Kafka backend
+  queue:
+    type: kafka
+    kafka:
+      brokers:
+        - kafka-0.kafka-headless:9092
+        - kafka-1.kafka-headless:9092
+        - kafka-2.kafka-headless:9092
+      topics:
+        events: "connektn-events"
+        dlq: "connektn-dlq"
+      consumerGroup: "connektn-agents"
+      sasl:
+        enabled: false
+      tls:
+        enabled: false
+
+  # Secrets (should be provided via external secret manager)
+  secrets:
+    existingSecret: "connektn-agent-secrets"
+
+  # Agent configuration
+  config:
+    privacy:
+      mode: "strict"
+      idMode: "strict"
+    export:
+      mode: "http"
+      http:
+        baseUrl: "https://api.connektn.io"
+        maxRetries: 5
+        batchSize: 100
+        flushEvery: 3s
+
+  # Higher resources for HA deployment
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+
+  # Anti-affinity to spread agent pods across nodes
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: connektn-agent
+          topologyKey: kubernetes.io/hostname
+
+  # Enable Prometheus monitoring
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+    labels:
+      prometheus: kube-prometheus
+
+# Connektn Gateway configuration (HA profile)
+connektn-gateway:
+  type: nginx
+  replicaCount: 3
+
+  # Enable autoscaling
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+
+  # Gateway routes to agent service
+  config:
+    upstream:
+      serviceName: connektn-stack-connektn-agent
+      port: 8080
+
+    tls:
+      enabled: true
+      clientCertRequired: false
+      # For production, use cert-manager
+      certManager:
+        enabled: true
+        issuerRef:
+          name: letsencrypt-prod
+          kind: ClusterIssuer
+
+    # Higher rate limits for production
+    rateLimit:
+      enabled: true
+      requestsPerSecond: 100
+      burst: 200
+
+  # Production service configuration
+  service:
+    type: LoadBalancer
+    port: 443
+    annotations:
+      # AWS NLB example
+      service.beta.kubernetes.io/aws-load-balancer-type: nlb
+      service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+      # GCP example
+      # cloud.google.com/load-balancer-type: "Internal"
+      # Azure example
+      # service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+
+  # Higher resources for production
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+  # Anti-affinity to spread gateway pods
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: connektn-gateway
+        topologyKey: kubernetes.io/hostname

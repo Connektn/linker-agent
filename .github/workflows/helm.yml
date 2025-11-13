@@ -1,0 +1,201 @@
+name: Helm Charts CI
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'charts/**'
+      - '.github/workflows/helm.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'charts/**'
+      - '.github/workflows/helm.yml'
+
+jobs:
+  lint-and-test:
+    name: Lint and Test Helm Charts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'v3.14.0'
+
+      - name: Set up chart-testing
+        uses: helm/chart-testing-action@v2.6.1
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: 'v1.29.0'
+
+      - name: Set up kind
+        uses: helm/kind-action@v1.9.0
+        with:
+          version: 'v0.22.0'
+          wait: 120s
+
+      - name: Add Helm dependencies
+        run: |
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          helm repo update
+
+      - name: Lint connektn-agent chart
+        run: |
+          helm lint charts/connektn-agent
+          ct lint --charts charts/connektn-agent --validate-maintainers=false
+
+      - name: Lint connektn-gateway chart
+        run: |
+          helm lint charts/connektn-gateway
+          ct lint --charts charts/connektn-gateway --validate-maintainers=false
+
+      - name: Build chart dependencies
+        run: |
+          cd charts/connektn-stack
+          helm dependency update
+          cd ../..
+
+      - name: Lint connektn-stack chart
+        run: |
+          helm lint charts/connektn-stack
+          ct lint --charts charts/connektn-stack --validate-maintainers=false
+
+      - name: Template connektn-agent chart
+        run: |
+          helm template test-agent charts/connektn-agent \
+            --set secrets.stripeApiKey=sk_test_dummy \
+            --set secrets.stripeWebhookSecret=whsec_dummy \
+            --set secrets.tenantSalt=dummy-salt-for-testing-only \
+            --debug
+
+      - name: Template connektn-gateway chart
+        run: |
+          helm template test-gateway charts/connektn-gateway --debug
+
+      - name: Template connektn-stack chart (Lite)
+        run: |
+          helm template test-stack charts/connektn-stack \
+            --set connektn-agent.secrets.stripeApiKey=sk_test_dummy \
+            --set connektn-agent.secrets.stripeWebhookSecret=whsec_dummy \
+            --set connektn-agent.secrets.tenantSalt=dummy-salt-for-testing \
+            --debug
+
+      - name: Template connektn-stack chart (HA)
+        run: |
+          helm template test-stack-ha charts/connektn-stack \
+            --values charts/connektn-stack/values-ha.yaml \
+            --set connektn-agent.secrets.existingSecret=dummy-secret \
+            --debug
+
+      - name: Dry-run install connektn-agent chart
+        run: |
+          # Validate chart can be installed (dry-run)
+          helm install test-agent charts/connektn-agent \
+            --namespace connektn-test \
+            --create-namespace \
+            --set secrets.stripeApiKey=sk_test_dummy \
+            --set secrets.stripeWebhookSecret=whsec_dummy \
+            --set secrets.tenantSalt=dummy-salt-for-testing-only-32chars \
+            --dry-run --debug
+
+      - name: Dry-run install connektn-stack chart (Lite)
+        run: |
+          # Validate stack can be installed (dry-run)
+          helm install test-stack charts/connektn-stack \
+            --namespace connektn-stack-test \
+            --create-namespace \
+            --set connektn-agent.secrets.stripeApiKey=sk_test_dummy \
+            --set connektn-agent.secrets.stripeWebhookSecret=whsec_dummy \
+            --set connektn-agent.secrets.tenantSalt=dummy-salt-for-testing-only-32chars \
+            --set connektn-gateway.service.type=ClusterIP \
+            --dry-run --debug
+
+      - name: Dry-run install connektn-stack chart (HA)
+        run: |
+          # Validate HA profile can be installed (dry-run)
+          helm install test-stack-ha charts/connektn-stack \
+            --namespace connektn-ha-test \
+            --create-namespace \
+            --values charts/connektn-stack/values-ha.yaml \
+            --set connektn-agent.secrets.existingSecret=dummy-secret \
+            --set connektn-agent.serviceMonitor.enabled=false \
+            --dry-run --debug
+
+  package:
+    name: Package Helm Charts
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'v3.14.0'
+
+      - name: Build chart dependencies
+        run: |
+          cd charts/connektn-stack
+          helm dependency update
+          cd ../..
+
+      - name: Package charts
+        run: |
+          mkdir -p .helm-packages
+          helm package charts/connektn-agent -d .helm-packages
+          helm package charts/connektn-gateway -d .helm-packages
+          helm package charts/connektn-stack -d .helm-packages
+
+      - name: Generate chart index
+        run: |
+          helm repo index .helm-packages --url https://charts.connektn.io
+
+      - name: Upload chart packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: helm-charts
+          path: .helm-packages/
+          retention-days: 30
+
+  security-scan:
+    name: Security Scan Helm Charts
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Checkov security scan
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: charts/
+          framework: kubernetes
+          quiet: true
+          soft_fail: false
+
+      - name: Run kubesec scan
+        continue-on-error: true
+        run: |
+          wget https://github.com/controlplaneio/kubesec/releases/download/v2.13.0/kubesec_linux_amd64.tar.gz
+          tar -xzf kubesec_linux_amd64.tar.gz
+          chmod +x kubesec
+
+          # Generate manifests and scan
+          helm template charts/connektn-agent \
+            --set secrets.stripeApiKey=dummy \
+            --set secrets.stripeWebhookSecret=dummy \
+            --set secrets.tenantSalt=dummy > /tmp/agent-manifest.yaml
+
+          echo "Running kubesec scan (informational only)..."
+          ./kubesec scan /tmp/agent-manifest.yaml || true

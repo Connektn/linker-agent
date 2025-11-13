@@ -1,0 +1,85 @@
+# Connektn Stack - Minikube Example (Lite Profile)
+# This example is suitable for local development and testing on Minikube
+
+agent:
+  enabled: true
+
+gateway:
+  enabled: true
+
+connektn-agent:
+  profile: lite
+  mode: webhook
+  replicaCount: 1
+
+  image:
+    repository: ghcr.io/connektn/linker-agent
+    tag: "latest"
+    pullPolicy: IfNotPresent
+
+  # Local storage for WAL
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClass: standard  # Minikube default storage class
+
+  # Secrets - replace with actual values
+  secrets:
+    stripeApiKey: "sk_test_your_key_here"
+    stripeWebhookSecret: "whsec_your_secret_here"
+    tenantSalt: "your-random-salt-min-32-chars-here"
+    # For local testing, you can leave this empty
+    connektnTenantKey: ""
+
+  config:
+    privacy:
+      mode: "strict"
+      idMode: "strict"
+    export:
+      # Use file mode for local testing
+      mode: "file"
+      file:
+        paths:
+          edges: "/var/lib/connektn/wal/link_edges.jsonl"
+          billing: "/var/lib/connektn/wal/billing.jsonl"
+          usage: "/var/lib/connektn/wal/usage.jsonl"
+
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 128Mi
+
+connektn-gateway:
+  type: nginx
+  replicaCount: 1  # Single replica for minikube
+
+  config:
+    upstream:
+      serviceName: connektn-stack-connektn-agent
+      port: 8080
+
+    # Disable TLS for local testing
+    tls:
+      enabled: false
+
+    rateLimit:
+      enabled: true
+      requestsPerSecond: 10
+      burst: 20
+
+  # Use NodePort for easy access in Minikube
+  service:
+    type: NodePort
+    port: 8080
+    annotations: {}
+
+  resources:
+    limits:
+      cpu: 100m
+      memory: 128Mi
+    requests:
+      cpu: 25m
+      memory: 64Mi
