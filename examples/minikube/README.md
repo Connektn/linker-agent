@@ -137,32 +137,62 @@ kubectl logs -f deployment/connektn-connektn-gateway -n connektn
 
 ### Check Exported Data
 
-Since we're using file export mode, you can check the exported files. The agent uses a distroless image (no shell), so use `kubectl cp` to extract files:
+Since we're using file export mode, you can check the exported files. The agent uses a distroless image (no shell or tar), so you need a debug pod.
+
+**Option 1: Use kubectl debug (recommended)**
 
 ```bash
 # Get the agent pod name
 AGENT_POD=$(kubectl get pod -n connektn -l app.kubernetes.io/name=connektn-agent -o jsonpath='{.items[0].metadata.name}')
 
-# Copy files from the pod to your local machine
-kubectl cp connektn/$AGENT_POD:/var/lib/connektn/wal/link_edges.jsonl ./link_edges.jsonl
-kubectl cp connektn/$AGENT_POD:/var/lib/connektn/wal/billing.jsonl ./billing.jsonl
-kubectl cp connektn/$AGENT_POD:/var/lib/connektn/wal/usage.jsonl ./usage.jsonl
-
-# View the files locally
-cat link_edges.jsonl
-cat billing.jsonl
-cat usage.jsonl
-```
-
-Alternatively, use an ephemeral debug container:
-
-```bash
 # Launch a debug container with shell access to the pod's filesystem
 kubectl debug -it -n connektn $AGENT_POD --image=busybox:1.28 --target=agent
 
 # Inside the debug container:
 ls -lh /var/lib/connektn/wal/
 cat /var/lib/connektn/wal/link_edges.jsonl
+cat /var/lib/connektn/wal/billing.jsonl
+exit
+```
+
+**Option 2: Create a debug pod that mounts the PVC**
+
+If kubectl debug doesn't work, create a temporary pod:
+
+```bash
+# Create debug pod
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: debug-wal-viewer
+  namespace: connektn
+spec:
+  containers:
+  - name: debug
+    image: busybox:1.28
+    command: ["sh", "-c", "sleep 3600"]
+    volumeMounts:
+    - name: wal-storage
+      mountPath: /var/lib/connektn/wal
+  volumes:
+  - name: wal-storage
+    persistentVolumeClaim:
+      claimName: connektn-connektn-agent
+EOF
+
+# Wait for it to be ready
+kubectl wait --for=condition=ready pod/debug-wal-viewer -n connektn --timeout=30s
+
+# Exec into the debug pod
+kubectl exec -it debug-wal-viewer -n connektn -- sh
+
+# Inside the pod:
+ls -lh /var/lib/connektn/wal/
+cat /var/lib/connektn/wal/link_edges.jsonl
+
+# When done, clean up
+kubectl delete pod debug-wal-viewer -n connektn
 ```
 
 ## Troubleshooting
@@ -207,14 +237,14 @@ kubectl logs -l app.kubernetes.io/name=connektn-gateway -n connektn
 
 ### Can't Exec into Agent Pod (No Shell)
 
-The agent uses a distroless image for security, which doesn't include a shell:
+The agent uses a distroless image for security, which doesn't include a shell or tar:
 
 ```bash
-# ❌ This won't work:
+# ❌ These won't work:
 # kubectl exec -it deployment/connektn-connektn-agent -n connektn -- sh
+# kubectl cp connektn/$AGENT_POD:/path/to/file ./file
 
-# ✅ Use kubectl cp instead (see "Check Exported Data" section above)
-# OR use kubectl debug with an ephemeral container
+# ✅ Use kubectl debug or create a debug pod (see "Check Exported Data" section above)
 ```
 
 ### PVC not binding
