@@ -137,20 +137,32 @@ kubectl logs -f deployment/connektn-connektn-gateway -n connektn
 
 ### Check Exported Data
 
-Since we're using file export mode, you can check the exported files:
+Since we're using file export mode, you can check the exported files. The agent uses a distroless image (no shell), so use `kubectl cp` to extract files:
 
 ```bash
-# Exec into the agent pod
-kubectl exec -it deployment/connektn-connektn-agent -n connektn -- sh
+# Get the agent pod name
+AGENT_POD=$(kubectl get pod -n connektn -l app.kubernetes.io/name=connektn-agent -o jsonpath='{.items[0].metadata.name}')
 
-# List exported files
+# Copy files from the pod to your local machine
+kubectl cp connektn/$AGENT_POD:/var/lib/connektn/wal/link_edges.jsonl ./link_edges.jsonl
+kubectl cp connektn/$AGENT_POD:/var/lib/connektn/wal/billing.jsonl ./billing.jsonl
+kubectl cp connektn/$AGENT_POD:/var/lib/connektn/wal/usage.jsonl ./usage.jsonl
+
+# View the files locally
+cat link_edges.jsonl
+cat billing.jsonl
+cat usage.jsonl
+```
+
+Alternatively, use an ephemeral debug container:
+
+```bash
+# Launch a debug container with shell access to the pod's filesystem
+kubectl debug -it -n connektn $AGENT_POD --image=busybox:1.28 --target=agent
+
+# Inside the debug container:
 ls -lh /var/lib/connektn/wal/
-
-# View edges
 cat /var/lib/connektn/wal/link_edges.jsonl
-
-# View billing data
-cat /var/lib/connektn/wal/billing.jsonl
 ```
 
 ## Troubleshooting
@@ -191,6 +203,18 @@ kubectl logs -l app.kubernetes.io/name=connektn-agent -n connektn
 
 # Check gateway logs
 kubectl logs -l app.kubernetes.io/name=connektn-gateway -n connektn
+```
+
+### Can't Exec into Agent Pod (No Shell)
+
+The agent uses a distroless image for security, which doesn't include a shell:
+
+```bash
+# ❌ This won't work:
+# kubectl exec -it deployment/connektn-connektn-agent -n connektn -- sh
+
+# ✅ Use kubectl cp instead (see "Check Exported Data" section above)
+# OR use kubectl debug with an ephemeral container
 ```
 
 ### PVC not binding
