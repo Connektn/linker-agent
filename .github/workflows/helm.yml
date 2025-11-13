@@ -125,6 +125,7 @@ jobs:
             --create-namespace \
             --values charts/connektn-stack/values-ha.yaml \
             --set connektn-agent.secrets.existingSecret=dummy-secret \
+            --set connektn-agent.serviceMonitor.enabled=false \
             --dry-run --debug
 
   package:
