@@ -3,8 +3,11 @@ package agent
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -112,7 +115,7 @@ func (s *HeartbeatSender) sendHeartbeat(ctx context.Context) error {
 		}
 	}
 
-	// Create payload
+	// Create payload (without signature - signature is computed separately)
 	payload := heartbeat.NewPayload(
 		s.agent.ID(),
 		s.agent.OrganizationID(),
@@ -123,15 +126,23 @@ func (s *HeartbeatSender) sendHeartbeat(ctx context.Context) error {
 		s.lastFlushTimestamp,
 	)
 
-	// Sign payload
-	if err := payload.Sign(s.secret); err != nil {
-		return fmt.Errorf("failed to sign heartbeat: %w", err)
-	}
-
 	// Marshal to JSON
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("failed to marshal heartbeat: %w", err)
+	}
+
+	// Generate nonce for replay protection
+	nonceBytes := make([]byte, 16)
+	if _, err := rand.Read(nonceBytes); err != nil {
+		return fmt.Errorf("failed to generate nonce: %w", err)
+	}
+	nonce := base64.StdEncoding.EncodeToString(nonceBytes)
+
+	// Sign according to server format: timestamp|nonce|body
+	signature, err := heartbeat.SignRequest(s.secret, payload.Timestamp, nonce, body)
+	if err != nil {
+		return fmt.Errorf("failed to sign heartbeat: %w", err)
 	}
 
 	// Send HTTP request
@@ -140,6 +151,17 @@ func (s *HeartbeatSender) sendHeartbeat(ctx context.Context) error {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Signature", signature)
+	req.Header.Set("X-Timestamp", fmt.Sprintf("%d", payload.Timestamp))
+	req.Header.Set("X-Nonce", nonce)
+
+	// Debug logging
+	s.logger.Debug("sending heartbeat request",
+		zap.String("timestamp", fmt.Sprintf("%d", payload.Timestamp)),
+		zap.String("nonce", nonce),
+		zap.String("signature", signature),
+		zap.Int("body_length", len(body)),
+	)
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
@@ -148,6 +170,16 @@ func (s *HeartbeatSender) sendHeartbeat(ctx context.Context) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// Read response body for debugging
+		bodyBytes, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			bodyBytes = []byte(fmt.Sprintf("failed to read body: %v", readErr))
+		}
+		s.logger.Error("heartbeat failed with non-2xx status",
+			zap.Int("status_code", resp.StatusCode),
+			zap.String("status", resp.Status),
+			zap.String("response_body", string(bodyBytes)),
+		)
 		return fmt.Errorf("heartbeat request failed with status %d", resp.StatusCode)
 	}
 
