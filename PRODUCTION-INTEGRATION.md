@@ -1,5 +1,150 @@
 # Production Integration Complete - Agent Management Features
 
+## Quick Installation (For Onboarding)
+
+Install and run the Connektn Linker Agent with a single command:
+
+```bash
+curl -fsSL https://install.connektn.io/agent.sh | sh -s -- \
+  --org-id="YOUR_ORG_ID" \
+  --heartbeat-secret="YOUR_HEARTBEAT_SECRET" \
+  --control-secret="YOUR_CONTROL_SECRET" \
+  --stripe-key="YOUR_STRIPE_API_KEY" \
+  --stripe-webhook-secret="YOUR_STRIPE_WEBHOOK_SECRET" \
+  --tenant-salt="YOUR_TENANT_SALT"
+```
+
+**What this does:**
+1. Downloads the latest agent binary
+2. Creates configuration file with provided credentials
+3. Sets up systemd service (or Docker container)
+4. Starts the agent immediately
+5. Agent ID is automatically generated and persisted
+
+**Verify installation:**
+```bash
+# Check agent status
+curl -s http://localhost:8081/healthz | jq .
+
+# View agent ID
+cat ~/.connektn/agent-id
+```
+
+### Manual Installation (Alternative)
+
+If you prefer manual installation or the install script isn't available yet:
+
+**1. Download the agent:**
+```bash
+# Download latest release
+curl -LO https://github.com/Connektn/linker-agent/releases/latest/download/linker-agent-linux-amd64
+chmod +x linker-agent-linux-amd64
+sudo mv linker-agent-linux-amd64 /usr/local/bin/linker-agent
+```
+
+**2. Create configuration:**
+```bash
+sudo mkdir -p /etc/connektn
+sudo tee /etc/connektn/config.yaml > /dev/null << EOF
+server:
+  addr: ":8080"
+
+privacy:
+  mode: "strict"
+  tenantSalt: "env:TENANT_SALT"
+
+agent:
+  organizationId: "env:ORGANIZATION_ID"
+  version: "1.0.0"
+
+heartbeat:
+  enabled: true
+  endpoint: "https://api.connektn.io/agent/heartbeat"
+  interval: 30s
+  signatureSecret: "env:HEARTBEAT_SECRET"
+
+control:
+  enabled: true
+  listenAddr: ":8081"
+  signatureSecret: "env:CONTROL_SECRET"
+  maxClockSkew: 5m
+
+sources:
+  stripe:
+    apiKey: "env:STRIPE_API_KEY"
+    webhook:
+      enabled: true
+      path: "/webhooks/stripe"
+      signingSecret: "env:STRIPE_WEBHOOK_SECRET"
+
+export:
+  mode: "cloud"
+  cloud:
+    endpoint: "https://api.connektn.io/ingest"
+    timeout: 30s
+
+matchers:
+  recipe:
+    name: "default"
+    version: "v1"
+EOF
+```
+
+**3. Set environment variables:**
+```bash
+sudo tee /etc/connektn/env > /dev/null << EOF
+ORGANIZATION_ID=your-org-id
+HEARTBEAT_SECRET=your-heartbeat-secret
+CONTROL_SECRET=your-control-secret
+STRIPE_API_KEY=sk_live_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+TENANT_SALT=your-tenant-salt
+EOF
+sudo chmod 600 /etc/connektn/env
+```
+
+**4. Create systemd service:**
+```bash
+sudo tee /etc/systemd/system/connektn-agent.service > /dev/null << EOF
+[Unit]
+Description=Connektn Linker Agent
+After=network.target
+
+[Service]
+Type=simple
+User=connektn
+EnvironmentFile=/etc/connektn/env
+ExecStart=/usr/local/bin/linker-agent -config /etc/connektn/config.yaml
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+**5. Start the agent:**
+```bash
+sudo useradd -r -s /bin/false connektn
+sudo systemctl daemon-reload
+sudo systemctl enable connektn-agent
+sudo systemctl start connektn-agent
+```
+
+**6. Verify:**
+```bash
+# Check service status
+sudo systemctl status connektn-agent
+
+# Check agent health
+curl -s http://localhost:8081/healthz | jq .
+
+# View logs
+sudo journalctl -u connektn-agent -f
+```
+
+---
+
 ## Summary
 
 Agent management and heartbeat features (Story 2) have been successfully integrated into the **production webhook server mode** in `main.go`. The agent now supports remote control, heartbeat monitoring, and dynamic privacy mode switching without restarts.
