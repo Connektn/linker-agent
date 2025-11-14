@@ -2,26 +2,79 @@
 
 ## Quick Installation (For Onboarding)
 
-Install and run the Connektn Linker Agent with a single command:
+Install and run the Connektn Linker Agent locally:
 
 ```bash
-curl -fsSL https://install.connektn.io/agent.sh | sh -s -- \
-  --org-id="YOUR_ORG_ID" \
-  --heartbeat-secret="YOUR_HEARTBEAT_SECRET" \
-  --control-secret="YOUR_CONTROL_SECRET" \
-  --stripe-key="YOUR_STRIPE_API_KEY" \
-  --stripe-webhook-secret="YOUR_STRIPE_WEBHOOK_SECRET" \
-  --tenant-salt="YOUR_TENANT_SALT"
+# Clone and build
+git clone https://github.com/Connektn/linker-agent.git
+cd linker-agent
+make build
+
+# Create minimal config
+cat > config.yaml << 'EOF'
+server:
+  addr: ":8080"
+
+privacy:
+  mode: "strict"
+  tenantSalt: "env:TENANT_SALT"
+
+agent:
+  organizationId: "env:ORGANIZATION_ID"
+  version: "1.0.0"
+
+heartbeat:
+  enabled: true
+  endpoint: "http://localhost:9000/heartbeat"  # For local testing
+  interval: 30s
+  signatureSecret: "env:HEARTBEAT_SECRET"
+
+control:
+  enabled: true
+  listenAddr: ":8081"
+  signatureSecret: "env:CONTROL_SECRET"
+  maxClockSkew: 5m
+
+sources:
+  stripe:
+    apiKey: "env:STRIPE_API_KEY"
+    webhook:
+      enabled: true
+      path: "/webhooks/stripe"
+      signingSecret: "env:STRIPE_WEBHOOK_SECRET"
+
+export:
+  mode: "file"
+  file:
+    paths:
+      edges: "./edges.jsonl"
+
+matchers:
+  recipe:
+    name: "default"
+    version: "v1"
+EOF
+
+# Set environment variables
+export ORGANIZATION_ID="your-org-id"
+export HEARTBEAT_SECRET="your-heartbeat-secret"
+export CONTROL_SECRET="your-control-secret"
+export STRIPE_API_KEY="sk_test_..."
+export STRIPE_WEBHOOK_SECRET="whsec_..."
+export TENANT_SALT="your-tenant-salt"
+
+# Run the agent
+./dist/linker-agent -config config.yaml
 ```
 
 **What this does:**
-1. Downloads the latest agent binary
-2. Creates configuration file with provided credentials
-3. Sets up systemd service (or Docker container)
-4. Starts the agent immediately
-5. Agent ID is automatically generated and persisted
+1. Builds the agent from source
+2. Creates configuration file for local testing
+3. Starts the agent with webhook server on `:8080`
+4. Control server runs on `:8081`
+5. Agent ID is automatically generated at `~/.connektn/agent-id`
 
-**Verify installation:**
+**Verify installation (in another terminal):**
 ```bash
 # Check agent status
 curl -s http://localhost:8081/healthz | jq .
@@ -30,9 +83,9 @@ curl -s http://localhost:8081/healthz | jq .
 cat ~/.connektn/agent-id
 ```
 
-### Manual Installation (Alternative)
+### Production Deployment (Future)
 
-If you prefer manual installation or the install script isn't available yet:
+For production deployment with systemd (when releases are available):
 
 **1. Download the agent:**
 ```bash
