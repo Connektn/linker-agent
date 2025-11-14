@@ -156,6 +156,9 @@ spec:
           mountPath: /etc/connektn/certs
           readOnly: true
         {{- end }}
+        # Agent data directory for agent ID persistence
+        - name: agent-data
+          mountPath: /home/nonroot/.connektn
         # Add tmp directory for non-root filesystem
         - name: tmp
           mountPath: /tmp
@@ -173,6 +176,9 @@ spec:
         secret:
           secretName: {{ .Values.mtls.existingSecret | default (printf "%s-mtls" (include "connektn-agent.fullname" .)) }}
       {{- end }}
+      # Agent data for persistent agent ID (using emptyDir for now due to Minikube mount issues)
+      - name: agent-data
+        emptyDir: {}
       - name: tmp
         emptyDir: {}
       {{- with .Values.nodeSelector }}

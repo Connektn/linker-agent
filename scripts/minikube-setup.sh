@@ -57,6 +57,18 @@ if [[ ${#TENANT_SALT} -lt 32 ]]; then
     error "TENANT_SALT must be at least 32 characters long.\n   Current length: ${#TENANT_SALT}"
 fi
 
+if [[ -z "${ORGANIZATION_ID:-}" ]]; then
+    error "ORGANIZATION_ID not set. Please export it first:\n   export ORGANIZATION_ID='your-org-id'"
+fi
+
+if [[ -z "${HEARTBEAT_SECRET:-}" ]]; then
+    error "HEARTBEAT_SECRET not set. Please export it first:\n   export HEARTBEAT_SECRET='your-heartbeat-secret'"
+fi
+
+if [[ -z "${CONTROL_SECRET:-}" ]]; then
+    error "CONTROL_SECRET not set. Please export it first:\n   export CONTROL_SECRET='your-control-secret'"
+fi
+
 log "✅ Environment validated"
 
 # -------------------------------------------------------------------
@@ -120,6 +132,9 @@ kubectl create secret generic connektn-secrets \
     --from-literal=STRIPE_API_KEY="$STRIPE_API_KEY" \
     --from-literal=STRIPE_WEBHOOK_SECRET="$STRIPE_WEBHOOK_SECRET" \
     --from-literal=TENANT_SALT="$TENANT_SALT" \
+    --from-literal=ORGANIZATION_ID="$ORGANIZATION_ID" \
+    --from-literal=HEARTBEAT_SECRET="$HEARTBEAT_SECRET" \
+    --from-literal=CONTROL_SECRET="$CONTROL_SECRET" \
     -n "$NAMESPACE"
 
 log "✅ Secrets created"

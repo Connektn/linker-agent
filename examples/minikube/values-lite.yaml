@@ -28,6 +28,9 @@ connektn-agent:
     stripeApiKey: "sk_test_your_key_here"
     stripeWebhookSecret: "whsec_your_secret_here"
     tenantSalt: "your-random-salt-min-32-chars-here"
+    organizationId: "your-org-id"
+    heartbeatSecret: "your-heartbeat-secret"
+    controlSecret: "your-control-secret"
     # For local testing, you can leave this empty
     connektnTenantKey: ""
 
