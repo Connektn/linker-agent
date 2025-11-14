@@ -9,8 +9,10 @@ import (
 	"strings"
 )
 
-// DefaultStoragePath is the default location for persisting the agent ID
-const DefaultStoragePath = "/var/lib/connektn/agent-id"
+// DefaultStoragePath is the default location for persisting the agent ID.
+// Uses user's home directory to avoid requiring sudo permissions.
+// In production Kubernetes deployments, this would be mounted as a persistent volume.
+const DefaultStoragePath = "~/.connektn/agent-id"
 
 // Generator handles agent ID generation and persistence
 type Generator struct {
@@ -22,9 +24,33 @@ func NewGenerator(storagePath string) *Generator {
 	if storagePath == "" {
 		storagePath = DefaultStoragePath
 	}
+
+	// Expand ~ to home directory
+	storagePath = expandHomeDir(storagePath)
+
 	return &Generator{
 		storagePath: storagePath,
 	}
+}
+
+// expandHomeDir expands ~ in path to the user's home directory
+func expandHomeDir(path string) string {
+	if !strings.HasPrefix(path, "~") {
+		return path
+	}
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		// Fall back to original path if we can't get home dir
+		return path
+	}
+
+	if path == "~" {
+		return homeDir
+	}
+
+	// Replace ~/... with /home/user/...
+	return filepath.Join(homeDir, path[2:])
 }
 
 // GetOrCreate retrieves the existing agent ID from disk, or generates and persists a new one

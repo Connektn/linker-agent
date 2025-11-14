@@ -87,7 +87,7 @@ make build
 ```
 
 The agent will:
-1. Generate/load persistent agent ID from `/var/lib/connektn/agent-id`
+1. Generate/load persistent agent ID from `~/.connektn/agent-id`
 2. Start Stripe webhook server on `:8080`
 3. Start heartbeat sender (sends to cloud every 30s)
 4. Start control command server on `:8081`
@@ -128,7 +128,7 @@ curl -X POST http://localhost:8081/api/control/command \
 
 The agent is designed for Kubernetes deployment:
 
-1. **Persistent agent ID**: Use a PersistentVolumeClaim for `/var/lib/connektn/agent-id`
+1. **Persistent agent ID**: Mount a PersistentVolumeClaim to `~/.connektn` or set custom path via environment variable
 2. **Secrets**: Store signing secrets in Kubernetes Secrets
 3. **Network policies**: Restrict access to control endpoint (`:8081`)
 4. **Auto-restart**: Pod restart policy ensures automatic recovery after `restart` command

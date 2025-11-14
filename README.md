@@ -892,10 +892,11 @@ export CONTROL_SECRET="your-control-command-secret"
 **Persistent Agent ID:**
 
 The agent automatically generates a persistent identifier on first run:
-- Stored in `/var/lib/connektn/agent-id` (production)
+- Stored in `~/.connektn/agent-id` by default
 - Format: `agent_{32-char-hex}`
 - Survives restarts and redeployments
 - Used for heartbeat tracking and command routing
+- In Kubernetes: mount persistent volume to override location
 
 ### Security
 
