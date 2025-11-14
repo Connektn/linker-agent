@@ -67,4 +67,4 @@ Agents must send periodic heartbeats containing health, queue, and mode data, an
 ---
 
 **Author:** Tomas Zezula  
-**Status:** Backlog
+**Status:** Done
