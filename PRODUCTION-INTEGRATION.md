@@ -2,85 +2,58 @@
 
 ## Quick Installation (For Onboarding)
 
-Install and run the Connektn Linker Agent locally:
+Install and run the Connektn Linker Agent in Minikube with a single command:
 
 ```bash
-# Clone and build
+# Clone the repository
 git clone https://github.com/Connektn/linker-agent.git
 cd linker-agent
-make build
 
-# Create minimal config
-cat > config.yaml << 'EOF'
-server:
-  addr: ":8080"
-
-privacy:
-  mode: "strict"
-  tenantSalt: "env:TENANT_SALT"
-
-agent:
-  organizationId: "env:ORGANIZATION_ID"
-  version: "1.0.0"
-
-heartbeat:
-  enabled: true
-  endpoint: "http://localhost:9000/heartbeat"  # For local testing
-  interval: 30s
-  signatureSecret: "env:HEARTBEAT_SECRET"
-
-control:
-  enabled: true
-  listenAddr: ":8081"
-  signatureSecret: "env:CONTROL_SECRET"
-  maxClockSkew: 5m
-
-sources:
-  stripe:
-    apiKey: "env:STRIPE_API_KEY"
-    webhook:
-      enabled: true
-      path: "/webhooks/stripe"
-      signingSecret: "env:STRIPE_WEBHOOK_SECRET"
-
-export:
-  mode: "file"
-  file:
-    paths:
-      edges: "./edges.jsonl"
-
-matchers:
-  recipe:
-    name: "default"
-    version: "v1"
-EOF
-
-# Set environment variables
-export ORGANIZATION_ID="your-org-id"
-export HEARTBEAT_SECRET="your-heartbeat-secret"
-export CONTROL_SECRET="your-control-secret"
+# Set required environment variables
 export STRIPE_API_KEY="sk_test_..."
 export STRIPE_WEBHOOK_SECRET="whsec_..."
 export TENANT_SALT="your-tenant-salt"
+export ORGANIZATION_ID="your-org-id"
+export HEARTBEAT_SECRET="your-heartbeat-secret"
+export CONTROL_SECRET="your-control-secret"
 
-# Run the agent
-./dist/linker-agent -config config.yaml
+# Deploy to Minikube (starts Minikube if needed, builds and deploys the agent)
+make minikube-up
 ```
 
 **What this does:**
-1. Builds the agent from source
-2. Creates configuration file for local testing
-3. Starts the agent with webhook server on `:8080`
-4. Control server runs on `:8081`
-5. Agent ID is automatically generated at `~/.connektn/agent-id`
+1. Starts Minikube (if not already running)
+2. Builds the agent Docker image
+3. Deploys the agent to Kubernetes with all management features enabled
+4. Sets up services for webhook (port 8080) and control (port 8081)
+5. Agent ID is automatically generated and persisted in a Kubernetes PVC
 
-**Verify installation (in another terminal):**
+**Verify installation:**
 ```bash
-# Check agent status
+# Check deployment status
+make minikube-status
+
+# View agent logs
+kubectl logs -n connektn -l app=linker-agent -f
+
+# Port forward to access locally
+kubectl port-forward -n connektn svc/linker-agent 8080:8080 8081:8081
+```
+
+**Access the agent:**
+```bash
+# In another terminal, after port-forward:
+
+# Check agent health
 curl -s http://localhost:8081/healthz | jq .
 
-# View agent ID
-cat ~/.connektn/agent-id
+# Get agent ID from logs
+kubectl logs -n connektn -l app=linker-agent | grep "Agent ID:"
+```
+
+**Stop the agent:**
+```bash
+make minikube-down
 ```
 
 ### Production Deployment (Future)
