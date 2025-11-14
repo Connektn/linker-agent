@@ -123,16 +123,7 @@ verify-build: ## Verify production build succeeds
 
 .PHONY: verify-agent-id
 verify-agent-id: verify-build ## Verify agent ID persistence
-	@echo -e "$(COLOR_GREEN)Testing agent ID persistence...$(COLOR_RESET)"
-	@rm -f /var/lib/connektn/agent-id 2>/dev/null || true
-	@echo "First run (creating agent ID):"
-	@timeout 2 ./dist/$(BINARY_NAME) -config config.yaml 2>&1 | grep "Agent ID" || true
-	@echo ""
-	@echo "Agent ID file contents:"
-	@cat /var/lib/connektn/agent-id 2>/dev/null || echo "⚠ Agent ID file not created"
-	@echo ""
-	@echo "Second run (should use same ID):"
-	@timeout 2 ./dist/$(BINARY_NAME) -config config.yaml 2>&1 | grep "Agent ID" || true
+	@./scripts/verify-agent-id.sh
 
 .PHONY: verify-heartbeat-receiver
 verify-heartbeat-receiver: ## Start mock heartbeat receiver (runs in foreground)

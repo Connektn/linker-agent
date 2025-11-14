@@ -64,8 +64,9 @@ matchers:
     version: "v1"
 EOF
 
-# Run agent (will exit immediately since webhook is disabled, but will create agent ID)
-timeout 2 ./dist/linker-agent -config /tmp/verify-config.yaml 2>&1 | grep -i "agent id" || true
+# Run agent briefly (will start webhook server, Ctrl+C after you see agent ID)
+# OR use background process with sleep
+(./dist/linker-agent -config /tmp/verify-config.yaml 2>&1 | grep -i "agent id" &) && sleep 2 && pkill -f "linker-agent.*verify-config"
 ```
 
 **Expected output:**
@@ -80,7 +81,7 @@ Agent ID: agent_<32-character-hex-string>
 cat /var/lib/connektn/agent-id
 
 # Run agent again - should use SAME ID
-timeout 2 ./dist/linker-agent -config /tmp/verify-config.yaml 2>&1 | grep -i "agent id"
+(./dist/linker-agent -config /tmp/verify-config.yaml 2>&1 | grep -i "agent id" &) && sleep 2 && pkill -f "linker-agent.*verify-config"
 ```
 
 **Expected:** Same agent ID as first run

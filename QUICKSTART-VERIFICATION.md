@@ -11,14 +11,24 @@ make build
 ## 1-Minute Check: Agent ID Persistence
 
 ```bash
-# First run - creates agent ID
-timeout 2 ./dist/linker-agent -config config.yaml 2>&1 | grep "Agent ID"
+# Automated script (recommended)
+./scripts/verify-agent-id.sh
+```
+
+**OR manual verification:**
+
+```bash
+# Clean any existing agent ID
+rm -f /var/lib/connektn/agent-id
+
+# First run - creates agent ID (will start server, Ctrl+C after you see "Agent ID:")
+./dist/linker-agent -config config.yaml
 
 # Check ID was saved
 cat /var/lib/connektn/agent-id
 
-# Second run - uses same ID
-timeout 2 ./dist/linker-agent -config config.yaml 2>&1 | grep "Agent ID"
+# Second run - uses same ID (Ctrl+C after you see "Agent ID:")
+./dist/linker-agent -config config.yaml
 ```
 
 **Expected:** Same agent ID on both runs

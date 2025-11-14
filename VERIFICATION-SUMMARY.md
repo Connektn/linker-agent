@@ -144,6 +144,7 @@ Quick pass/fail checklist:
 
 For comprehensive testing:
 
+- **Manual step-by-step:** `MANUAL-VERIFICATION.md` ⭐ (No timeout command required)
 - **10-minute workflow:** `QUICKSTART-VERIFICATION.md`
 - **Complete testing:** `VERIFICATION.md`
 - **Integration details:** `PRODUCTION-INTEGRATION.md`
