@@ -38,6 +38,13 @@ connektn-agent:
     privacy:
       mode: "strict"
       idMode: "strict"
+
+    # Heartbeat configuration - point to local CDP platform
+    heartbeat:
+      enabled: true
+      interval: 30s
+      endpoint: "http://host.minikube.internal:8080/agent/heartbeat"
+
     export:
       # Use file mode for local testing
       mode: "file"
