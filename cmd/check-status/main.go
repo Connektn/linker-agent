@@ -18,7 +18,7 @@ func main() {
 	resp, err := http.Get(endpoint + "/healthz")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to connect to agent: %v\n", err)
-		fmt.Fprintf(os.Stderr, "Is the test agent running? (make test-agent)\n")
+		fmt.Fprintf(os.Stderr, "Is the agent running? (./dist/linker-agent -webhook -config config.yaml)\n")
 		os.Exit(1)
 	}
 	defer resp.Body.Close()
@@ -38,7 +38,7 @@ func main() {
 	fmt.Println("Agent Status:")
 	fmt.Printf("  Health: %v\n", result["status"])
 	fmt.Println()
-	fmt.Println("Note: To see current mode, check the test-agent logs.")
+	fmt.Println("Note: To see current mode, check the agent logs.")
 	fmt.Println("The agent logs 'switching privacy mode from=X to=Y' when mode changes.")
 	fmt.Println()
 	fmt.Println("To switch mode:")

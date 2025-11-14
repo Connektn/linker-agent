@@ -24,8 +24,7 @@ ls -lh dist/linker-agent
 
 ```bash
 # Clean any existing agent ID
-rm -f /var/lib/connektn/agent-id 2>/dev/null || true
-rm -f /tmp/test-agent-id 2>/dev/null || true
+rm -f ~/.connektn/agent-id 2>/dev/null || true
 
 # Create minimal config
 cat > /tmp/verify-config.yaml << 'EOF'

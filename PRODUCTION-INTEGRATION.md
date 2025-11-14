@@ -195,7 +195,7 @@ For real customer deployments:
 
 ## Notes
 
-- The test harness (`cmd/test-agent`) remains available for local testing
+- Use `./scripts/verify-all.sh` for comprehensive local testing
 - Production mode uses real webhook processing + agent management
 - All features are production-ready and tested
 - Configuration is fully declarative via YAML + environment variables

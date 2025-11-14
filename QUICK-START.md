@@ -62,6 +62,6 @@ export ORGANIZATION_ID="org_test"
 
 ## See Also
 
-- **MANUAL-VERIFICATION.md** - Detailed step-by-step guide
-- **VERIFICATION-SUMMARY.md** - Quick reference card
+- **QUICKSTART-VERIFICATION.md** - Comprehensive verification guide with automated scripts
+- **VERIFICATION.md** - Detailed technical verification procedures
 - **PRODUCTION-INTEGRATION.md** - Deployment guide

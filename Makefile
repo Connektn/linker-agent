@@ -68,18 +68,10 @@ clean: ## Remove build artifacts
 	rm -f $(BINARY_NAME)
 	rm -f coverage.out coverage.html
 	rm -rf seed_reports
-	rm -f test-agent send-command
+	rm -f send-command
 	@echo -e "$(COLOR_GREEN)✓ Clean complete$(COLOR_RESET)"
 
-##@ Testing (Story 2)
-
-.PHONY: test-agent
-test-agent: ## Build and run the test agent harness
-	@echo -e "$(COLOR_GREEN)Building test agent...$(COLOR_RESET)"
-	$(GO) build -o test-agent cmd/test-agent/main.go
-	@echo -e "$(COLOR_GREEN)Starting test agent...$(COLOR_RESET)"
-	@echo -e "$(COLOR_YELLOW)Use Ctrl+C to stop$(COLOR_RESET)"
-	./test-agent
+##@ Control Command Utilities
 
 .PHONY: build-send-command
 build-send-command: ## Build the send-command utility
