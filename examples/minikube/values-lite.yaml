@@ -35,6 +35,10 @@ connektn-agent:
     connektnTenantKey: ""
 
   config:
+    # Server configuration - use different port to avoid conflict with CDP platform
+    server:
+      addr: ":8090"
+
     privacy:
       mode: "strict"
       idMode: "strict"
@@ -54,6 +58,10 @@ connektn-agent:
           billing: "/var/lib/connektn/wal/billing.jsonl"
           usage: "/var/lib/connektn/wal/usage.jsonl"
 
+  # Override service port to avoid conflict with CDP platform
+  service:
+    port: 8090
+
   resources:
     limits:
       cpu: 200m
@@ -69,7 +77,7 @@ connektn-gateway:
   config:
     upstream:
       serviceName: connektn-connektn-agent
-      port: 8080
+      port: 8090
 
     # Disable TLS for local testing
     tls:
