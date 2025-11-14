@@ -47,7 +47,7 @@ connektn-agent:
     heartbeat:
       enabled: true
       interval: 30s
-      endpoint: "http://host.minikube.internal:8080/agent/heartbeat"
+      endpoint: "http://host.minikube.internal:8080/api/agent/heartbeat"
 
     export:
       # Use file mode for local testing
