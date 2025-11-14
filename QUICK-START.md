@@ -56,7 +56,7 @@ For full testing with heartbeat and control features:
 
 ```bash
 export HEARTBEAT_SECRET="test-heartbeat-secret"
-export CONTROL_SECRET="test-control-secret"
+export CONTROL_SECRET="test-control-secret-key"
 export ORGANIZATION_ID="org_test"
 ```
 

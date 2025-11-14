@@ -162,7 +162,7 @@ heartbeat:
 control:
   enabled: true
   listenAddr: ":8081"
-  signatureSecret: "test-control-secret"
+  signatureSecret: "test-control-secret-key"
 
 sources:
   stripe:
@@ -197,7 +197,7 @@ curl -s http://localhost:8081/healthz | jq .
 send_command() {
   local cmd="$1"
   local params="${2:-{}}"
-  local secret="test-control-secret"
+  local secret="test-control-secret-key"
 
   local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
   local nonce=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
@@ -299,7 +299,7 @@ heartbeat:
 control:
   enabled: true
   listenAddr: ":8081"
-  signatureSecret: "test-control-secret"
+  signatureSecret: "test-control-secret-key"
 
 sources:
   stripe:
@@ -331,7 +331,7 @@ EOF
 send_command() {
   local cmd="$1"
   local params="${2:-{}}"
-  local secret="test-control-secret"
+  local secret="test-control-secret-key"
   local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
   local nonce=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
   local payload="${cmd}${timestamp}${nonce}${params}"
@@ -428,7 +428,7 @@ curl http://localhost:8081/healthz
 
 # Verify signature calculation
 echo -n "restart$(date -u +"%Y-%m-%dT%H:%M:%SZ")$(uuidgen){}" | \
-  openssl dgst -sha256 -hmac "test-control-secret"
+  openssl dgst -sha256 -hmac "test-control-secret-key"
 ```
 
 **Mode not switching?**

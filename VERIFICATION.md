@@ -307,7 +307,7 @@ heartbeat:
 control:
   enabled: true
   listenAddr: ":8081"
-  signatureSecret: "test-control-secret"
+  signatureSecret: "test-control-secret-key"
   maxClockSkew: 5m
   nonceCache:
     ttl: 10m
@@ -458,7 +458,7 @@ NONCE=$(uuidgen)
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 PARAMS='{"mode":"passthrough"}'
 PAYLOAD="switch_mode${TIMESTAMP}${NONCE}${PARAMS}"
-SIGNATURE=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "test-control-secret" | awk '{print $2}')
+SIGNATURE=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "test-control-secret-key" | awk '{print $2}')
 
 # First attempt - should succeed
 curl -X POST http://localhost:8081/api/control/command \
@@ -517,7 +517,7 @@ heartbeat:
 control:
   enabled: true
   listenAddr: ":8081"
-  signatureSecret: "test-control-secret"
+  signatureSecret: "test-control-secret-key"
   maxClockSkew: 5m
 
 sources:
@@ -650,7 +650,7 @@ heartbeat:
 control:
   enabled: true
   listenAddr: ":8081"
-  signatureSecret: "test-control-secret"
+  signatureSecret: "test-control-secret-key"
 
 sources:
   stripe:

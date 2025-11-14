@@ -216,7 +216,7 @@ heartbeat:
 control:
   enabled: true
   listenAddr: ":8081"
-  signatureSecret: "test-control-secret"
+  signatureSecret: "test-control-secret-key"
 
 sources:
   stripe:
@@ -317,7 +317,7 @@ heartbeat:
 control:
   enabled: true
   listenAddr: ":8081"
-  signatureSecret: "test-control-secret"
+  signatureSecret: "test-control-secret-key"
 
 sources:
   stripe:
