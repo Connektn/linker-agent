@@ -39,6 +39,11 @@
   - [Security Model](#security-model)
   - [Monitoring](#monitoring)
   - [Troubleshooting](#troubleshooting)
+- [Agent Management & Remote Control](#agent-management--remote-control)
+  - [Heartbeat Monitoring](#heartbeat-monitoring)
+  - [Control Commands](#control-commands)
+  - [Configuration](#agent-configuration)
+  - [Security](#agent-security)
 - [Privacy & Security Principles](#privacy--security-principles)
   - [Zero-PII Architecture](#zero-pii-architecture)
   - [Tenant Salt Management](#tenant-salt-management)
@@ -798,6 +803,122 @@ These can be exposed via a `/metrics` endpoint for Prometheus scraping (future e
 - **Solution:** This should not happen due to idempotency tracking
 - Check logs for `duplicate webhook event ignored` messages
 - Verify event IDs are unique
+
+---
+
+## Agent Management & Remote Control
+
+The Linker Agent includes built-in remote management capabilities for production deployments. Agents send periodic heartbeats to Connektn Cloud and accept signed remote control commands for operational management.
+
+### Heartbeat Monitoring
+
+Agents send encrypted health metrics to Connektn Cloud at configurable intervals (default: 30s):
+
+**Heartbeat payload includes:**
+- Agent ID (persistent identifier)
+- Organization ID
+- Uptime
+- Current privacy mode (`strict` or `passthrough`)
+- Queue metrics (depth, dropped count, enqueued count)
+- HMAC-SHA256 signature for authenticity
+
+**Configuration:**
+```yaml
+heartbeat:
+  enabled: true
+  endpoint: "https://api.connektn.io/agent/heartbeat"
+  interval: 30s
+  signatureSecret: "env:HEARTBEAT_SECRET"
+```
+
+**Environment variables:**
+```bash
+export HEARTBEAT_SECRET="your-heartbeat-signing-secret"
+```
+
+### Control Commands
+
+The agent exposes a control API endpoint for remote management operations. All commands require HMAC-SHA256 signatures with nonce-based replay protection.
+
+**Supported commands:**
+
+| Command | Description | Effect |
+|---------|-------------|--------|
+| `switch_mode` | Change privacy mode | Switches between `strict` and `passthrough` modes WITHOUT restarting |
+| `restart` | Graceful restart | Triggers shutdown (K8s/orchestrator restarts pod automatically) |
+| `stop` | Stop agent | Gracefully stops all processing |
+| `start` | Start agent | Resumes processing after stop |
+| `upgrade` | Upgrade agent binary | Downloads and applies new version (not yet implemented) |
+
+**Example: Switch privacy mode**
+
+Mode switching happens dynamically without restarting the agent, ensuring zero downtime:
+
+```bash
+# From Connektn Cloud API or CLI
+curl -X POST https://your-agent:8081/api/control/command \
+  -H "Content-Type: application/json" \
+  -d '{
+    "command": "switch_mode",
+    "params": {"mode": "passthrough"},
+    "timestamp": "2025-01-15T10:30:00Z",
+    "nonce": "unique-random-value",
+    "signature": "hmac-sha256-signature-here"
+  }'
+```
+
+### Configuration
+
+```yaml
+agent:
+  organizationId: "env:ORGANIZATION_ID"
+  version: "1.0.0"
+
+control:
+  enabled: true
+  listenAddr: ":8081"
+  signatureSecret: "env:CONTROL_SECRET"
+  maxClockSkew: 5m
+  nonceCache:
+    ttl: 10m
+```
+
+**Environment variables:**
+```bash
+export ORGANIZATION_ID="org_abc123"
+export CONTROL_SECRET="your-control-command-secret"
+```
+
+**Persistent Agent ID:**
+
+The agent automatically generates a persistent identifier on first run:
+- Stored in `~/.connektn/agent-id` by default
+- Format: `agent_{32-char-hex}`
+- Survives restarts and redeployments
+- Used for heartbeat tracking and command routing
+- In Kubernetes: mount persistent volume to override location
+
+### Security
+
+**Signature verification:**
+- All control commands must include valid HMAC-SHA256 signatures
+- Signature covers: `command + timestamp + nonce + params`
+- Uses constant-time comparison to prevent timing attacks
+
+**Replay protection:**
+- Nonces are cached for configurable TTL (default: 10 minutes)
+- Same nonce cannot be used twice
+- Commands older than `maxClockSkew` are rejected
+
+**Clock skew tolerance:**
+- Default: 5 minutes
+- Protects against stale/future-dated commands
+- Configurable via `control.maxClockSkew`
+
+**Transport security:**
+- Control endpoint should be behind firewall/VPN in production
+- Consider using mutual TLS for additional security
+- Kubernetes NetworkPolicies can restrict access
 
 ---
 

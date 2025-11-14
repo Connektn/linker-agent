@@ -516,6 +516,47 @@ func isRetryable(err error) bool {
 	return false
 }
 
+// Depth returns the combined depth across all stream queues.
+// This implements part of the QueueMetricsProvider interface for heartbeat metrics.
+func (e *Exporter) Depth() int {
+	total := 0
+	for _, sq := range e.streams {
+		total += sq.queue.depth()
+	}
+	return total
+}
+
+// DLQSize returns the combined dead-letter queue size across all stream queues.
+// This implements part of the QueueMetricsProvider interface for heartbeat metrics.
+// Note: DLQ not yet implemented - returns 0.
+func (e *Exporter) DLQSize() int {
+	total := 0
+	for _, sq := range e.streams {
+		total += sq.queue.dlqSize()
+	}
+	return total
+}
+
+// DroppedCount returns the combined dropped count across all stream queues.
+// This implements part of the QueueMetricsProvider interface for heartbeat metrics.
+func (e *Exporter) DroppedCount() uint64 {
+	var total uint64
+	for _, sq := range e.streams {
+		total += sq.queue.dropped()
+	}
+	return total
+}
+
+// EnqueuedCount returns the combined enqueued count across all stream queues.
+// This implements part of the QueueMetricsProvider interface for heartbeat metrics.
+func (e *Exporter) EnqueuedCount() uint64 {
+	var total uint64
+	for _, sq := range e.streams {
+		total += sq.queue.enqueued()
+	}
+	return total
+}
+
 // generateUUID generates a UUID v4 using crypto/rand.
 // This is used for idempotency keys to ensure requests can be safely retried.
 func generateUUID() string {

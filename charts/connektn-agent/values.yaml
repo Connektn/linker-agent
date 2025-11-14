@@ -55,6 +55,7 @@ securityContext:
 service:
   type: ClusterIP
   port: 8080
+  controlPort: 8081
   annotations: {}
 
 # Ingress configuration (optional)
@@ -132,9 +133,34 @@ persistence:
 
 # Agent configuration
 config:
+  # Agent identity
+  agent:
+    # Agent ID will be auto-generated and persisted if not specified
+    id: ""
+    # Organization ID (required, loaded from secret)
+    organizationId: ""
+    version: ""  # Defaults to chart appVersion
+
   # Server configuration
   server:
     addr: ":8080"
+
+  # Heartbeat configuration
+  heartbeat:
+    enabled: true
+    interval: 30s
+    endpoint: "https://api.connektn.io/agent/heartbeat"
+    # signatureSecret will be loaded from secret
+
+  # Control command server configuration
+  control:
+    enabled: true
+    listenAddr: ":8081"
+    # signatureSecret will be loaded from secret
+    maxClockSkew: 300s  # 5 minutes
+    nonceCache:
+      ttl: 600s  # 10 minutes
+      capacity: 1000
 
   # Privacy configuration
   privacy:
@@ -199,6 +225,12 @@ secrets:
   stripeWebhookSecret: ""
   # Tenant salt for synthetic ID generation (required)
   tenantSalt: ""
+  # Organization ID (required)
+  organizationId: ""
+  # Heartbeat signature secret (required if heartbeat enabled)
+  heartbeatSecret: ""
+  # Control command signature secret (required if control enabled)
+  controlSecret: ""
   # Connektn tenant API key (optional, for HTTP export)
   connektnTenantKey: ""
   # Use existing secret instead of creating one

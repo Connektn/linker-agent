@@ -67,6 +67,25 @@ spec:
             secretKeyRef:
               name: {{ include "connektn-agent.secretName" . }}
               key: TENANT_SALT
+        - name: ORGANIZATION_ID
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "connektn-agent.secretName" . }}
+              key: ORGANIZATION_ID
+        {{- if .Values.config.heartbeat.enabled }}
+        - name: HEARTBEAT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "connektn-agent.secretName" . }}
+              key: HEARTBEAT_SECRET
+        {{- end }}
+        {{- if .Values.config.control.enabled }}
+        - name: CONTROL_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "connektn-agent.secretName" . }}
+              key: CONTROL_SECRET
+        {{- end }}
         {{- if .Values.secrets.connektnTenantKey }}
         - name: CONNEKTN_TENANT_KEY
           valueFrom:
@@ -111,6 +130,11 @@ spec:
         - name: http
           containerPort: 8080
           protocol: TCP
+        {{- if .Values.config.control.enabled }}
+        - name: control
+          containerPort: 8081
+          protocol: TCP
+        {{- end }}
         {{- if eq .Values.mode "webhook" }}
         livenessProbe:
           {{- toYaml .Values.livenessProbe | nindent 10 }}

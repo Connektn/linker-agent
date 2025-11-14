@@ -6,8 +6,38 @@ metadata:
     {{- include "connektn-agent.labels" . | nindent 4 }}
 data:
   config.yaml: |
+    agent:
+      {{- if .Values.config.agent.id }}
+      id: {{ .Values.config.agent.id | quote }}
+      {{- end }}
+      organizationId: "env:ORGANIZATION_ID"
+      {{- if .Values.config.agent.version }}
+      version: {{ .Values.config.agent.version | quote }}
+      {{- else }}
+      version: {{ .Chart.AppVersion | quote }}
+      {{- end }}
+
     server:
       addr: {{ .Values.config.server.addr | quote }}
+
+    {{- if .Values.config.heartbeat.enabled }}
+    heartbeat:
+      enabled: {{ .Values.config.heartbeat.enabled }}
+      interval: {{ .Values.config.heartbeat.interval }}
+      endpoint: {{ .Values.config.heartbeat.endpoint | quote }}
+      signatureSecret: "env:HEARTBEAT_SECRET"
+    {{- end }}
+
+    {{- if .Values.config.control.enabled }}
+    control:
+      enabled: {{ .Values.config.control.enabled }}
+      listenAddr: {{ .Values.config.control.listenAddr | quote }}
+      signatureSecret: "env:CONTROL_SECRET"
+      maxClockSkew: {{ .Values.config.control.maxClockSkew }}
+      nonceCache:
+        ttl: {{ .Values.config.control.nonceCache.ttl }}
+        capacity: {{ .Values.config.control.nonceCache.capacity }}
+    {{- end }}
 
     privacy:
       mode: {{ .Values.config.privacy.mode | quote }}

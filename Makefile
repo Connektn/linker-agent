@@ -68,7 +68,69 @@ clean: ## Remove build artifacts
 	rm -f $(BINARY_NAME)
 	rm -f coverage.out coverage.html
 	rm -rf seed_reports
+	rm -f send-command
 	@echo -e "$(COLOR_GREEN)✓ Clean complete$(COLOR_RESET)"
+
+##@ Control Command Utilities
+
+.PHONY: build-send-command
+build-send-command: ## Build the send-command utility
+	@echo -e "$(COLOR_GREEN)Building send-command utility...$(COLOR_RESET)"
+	$(GO) build -o send-command cmd/send-command/main.go
+	@echo -e "$(COLOR_GREEN)✓ Built: send-command$(COLOR_RESET)"
+
+.PHONY: test-control-restart
+test-control-restart: build-send-command ## Test control command: restart
+	@echo -e "$(COLOR_GREEN)Sending restart command...$(COLOR_RESET)"
+	./send-command restart
+
+.PHONY: test-control-switch-mode
+test-control-switch-mode: build-send-command ## Test control command: switch_mode to passthrough
+	@echo -e "$(COLOR_GREEN)Sending switch_mode command (passthrough)...$(COLOR_RESET)"
+	./send-command switch_mode mode=passthrough
+
+.PHONY: test-control-switch-strict
+test-control-switch-strict: build-send-command ## Test control command: switch_mode to strict
+	@echo -e "$(COLOR_GREEN)Sending switch_mode command (strict)...$(COLOR_RESET)"
+	./send-command switch_mode mode=strict
+
+.PHONY: test-control-stop
+test-control-stop: build-send-command ## Test control command: stop
+	@echo -e "$(COLOR_GREEN)Sending stop command...$(COLOR_RESET)"
+	./send-command stop
+
+.PHONY: test-health
+test-health: ## Test health check endpoint
+	@echo -e "$(COLOR_GREEN)Testing health endpoint...$(COLOR_RESET)"
+	@curl -s http://localhost:8081/healthz | jq . || echo "Agent not running or jq not installed"
+
+##@ Production Verification
+
+.PHONY: verify-build
+verify-build: ## Verify production build succeeds
+	@echo -e "$(COLOR_GREEN)Building production agent...$(COLOR_RESET)"
+	$(GO) build -o dist/$(BINARY_NAME) main.go
+	@echo -e "$(COLOR_GREEN)✓ Build successful$(COLOR_RESET)"
+	@ls -lh dist/$(BINARY_NAME)
+
+.PHONY: verify-agent-id
+verify-agent-id: verify-build ## Verify agent ID persistence
+	@./scripts/verify-agent-id.sh
+
+.PHONY: verify-heartbeat-receiver
+verify-heartbeat-receiver: ## Start mock heartbeat receiver (runs in foreground)
+	@echo -e "$(COLOR_GREEN)Starting mock heartbeat receiver on :9000$(COLOR_RESET)"
+	@echo -e "$(COLOR_YELLOW)Press Ctrl+C to stop$(COLOR_RESET)"
+	@python3 -c "import json,hmac,hashlib;from http.server import HTTPServer,BaseHTTPRequestHandler;SECRET=b'test-heartbeat-secret';class H(BaseHTTPRequestHandler):\n def do_POST(s):d=json.loads(s.rfile.read(int(s.headers['Content-Length'])));p=f\"{d['agentId']}:{d['organizationId']}:{d['timestamp']}:{d['uptime']}:{d['mode']}:{d['queueDepth']}:{d['droppedCount']}:{d['enqueuedCount']}:{d['dlqSize']}\";e=hmac.new(SECRET,p.encode(),hashlib.sha256).hexdigest();print(f\"✅ HB: uptime={d['uptime']:3d}s mode={d['mode']}\" if d['signature']==e else '❌ Bad sig');s.send_response(200);s.send_header('Content-Type','application/json');s.end_headers();s.wfile.write(b'{\"status\":\"ok\"}')\n def log_message(s,*a):pass\nHTTPServer(('',9000),H).serve_forever()"
+
+.PHONY: verify-all
+verify-all: test verify-build ## Run all tests and verify production build
+	@echo -e "$(COLOR_GREEN)✓ All verifications passed$(COLOR_RESET)"
+	@echo ""
+	@echo -e "$(COLOR_BLUE)Next steps:$(COLOR_RESET)"
+	@echo "  1. See QUICKSTART-VERIFICATION.md for 10-minute verification workflow"
+	@echo "  2. See VERIFICATION.md for comprehensive testing procedures"
+	@echo "  3. See PRODUCTION-INTEGRATION.md for deployment guidance"
 
 ##@ Docker
 
