@@ -1,14 +1,32 @@
 # Quick Verification Guide - Agent Management Features
 
-This is a streamlined 10-minute verification workflow for the production agent.
+This is a streamlined verification workflow for the production agent using automated scripts.
 
-## Prerequisites
+## All-in-One Verification (Recommended)
+
+Run everything in one command:
 
 ```bash
-make build
+./scripts/verify-all.sh
 ```
 
-## 1-Minute Check: Agent ID Persistence
+**Tests:**
+1. Build verification
+2. Agent ID persistence
+3. Heartbeat transmission with signature verification
+4. Control command endpoint
+5. Mode switching without restart
+
+**Expected output:**
+```
+✅ All verifications passed!
+```
+
+---
+
+## Individual Tests
+
+### 1-Minute: Agent ID Persistence
 
 ```bash
 # Automated script (recommended)
@@ -35,49 +53,39 @@ cat /var/lib/connektn/agent-id
 
 ---
 
-## 3-Minute Check: Heartbeat Transmission
+### 3-Minute: Heartbeat Transmission
 
-### Terminal 1: Mock Receiver
+Single script that starts both receiver and agent:
 
 ```bash
-# Quick Python heartbeat receiver
-python3 << 'EOF'
-import json
-import hmac
-import hashlib
-from http.server import HTTPServer, BaseHTTPRequestHandler
-
-SECRET = b"test-heartbeat-secret"
-
-class Handler(BaseHTTPRequestHandler):
-    def do_POST(self):
-        length = int(self.headers['Content-Length'])
-        data = json.loads(self.rfile.read(length))
-
-        # Verify signature
-        payload = f"{data['agentId']}:{data['organizationId']}:{data['timestamp']}:{data['uptime']}:{data['mode']}:{data['queueDepth']}:{data['droppedCount']}:{data['enqueuedCount']}:{data['dlqSize']}"
-        expected = hmac.new(SECRET, payload.encode(), hashlib.sha256).hexdigest()
-
-        if data['signature'] == expected:
-            print(f"✅ Heartbeat: uptime={data['uptime']}s mode={data['mode']} queue={data['queueDepth']}")
-            self.send_response(200)
-        else:
-            print(f"❌ Invalid signature")
-            self.send_response(401)
-
-        self.send_header('Content-Type', 'application/json')
-        self.end_headers()
-        self.wfile.write(b'{"status":"ok"}')
-
-    def log_message(self, format, *args):
-        pass  # Suppress access logs
-
-HTTPServer(('', 9000), Handler).serve_forever()
-EOF
+./scripts/verify-heartbeat.sh
 ```
 
-### Terminal 2: Agent with Heartbeat
+**What it does:**
+- Starts mock heartbeat receiver on port 9000
+- Starts agent with heartbeat enabled (3s interval)
+- Shows heartbeats in real-time
+- Press Ctrl+C to stop
 
+**Expected output:**
+```
+[ 1] ✅ Heartbeat: uptime=  3s mode=strict        queue=0 dropped=0
+[ 2] ✅ Heartbeat: uptime=  6s mode=strict        queue=0 dropped=0
+[ 3] ✅ Heartbeat: uptime=  9s mode=strict        queue=0 dropped=0
+```
+
+---
+
+### Manual Heartbeat Test (2 terminals)
+
+If you prefer the manual approach:
+
+**Terminal 1: Mock Receiver**
+```bash
+make verify-heartbeat-receiver
+```
+
+**Terminal 2: Agent**
 ```bash
 cat > /tmp/quick-heartbeat.yaml << 'EOF'
 server:
@@ -123,11 +131,15 @@ EOF
 ./dist/linker-agent -config /tmp/quick-heartbeat.yaml
 ```
 
-**Expected:** Terminal 1 shows heartbeats every 5 seconds with ✅
+**Expected:** Terminal 1 shows:
+```
+✅ HB: uptime=  5s mode=strict
+✅ HB: uptime= 10s mode=strict
+```
 
 ---
 
-## 3-Minute Check: Control Commands
+### 3-Minute: Control Commands
 
 ### Terminal 1: Start Agent
 
