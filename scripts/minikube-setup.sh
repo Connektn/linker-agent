@@ -192,11 +192,11 @@ kubectl get pods -n "$NAMESPACE"
 
 log "🔌 Setting up port-forward to gateway..."
 
-# Kill any existing port-forward on 8080
+# Kill any existing port-forward on 8082
 pkill -f "kubectl port-forward.*connektn-connektn-gateway" 2>/dev/null || true
 
-# Start port-forward in background
-kubectl port-forward svc/connektn-connektn-gateway 8080:8080 -n "$NAMESPACE" >/dev/null 2>&1 &
+# Start port-forward in background (using 8082 to avoid conflict with CDP platform on 8080)
+kubectl port-forward svc/connektn-connektn-gateway 8082:8080 -n "$NAMESPACE" >/dev/null 2>&1 &
 PORT_FORWARD_PID=$!
 
 # Wait a moment for port-forward to establish
@@ -205,10 +205,10 @@ sleep 2
 # Check if port-forward is running
 if ! kill -0 $PORT_FORWARD_PID 2>/dev/null; then
     warn "Port-forward failed to start. You can manually start it with:"
-    warn "  kubectl port-forward svc/connektn-connektn-gateway 8080:8080 -n $NAMESPACE"
+    warn "  kubectl port-forward svc/connektn-connektn-gateway 8082:8080 -n $NAMESPACE"
 else
     log "✅ Port-forward running in background (PID: $PORT_FORWARD_PID)"
-    echo "   Gateway available at: http://localhost:8080"
+    echo "   Gateway available at: http://localhost:8082"
 fi
 
 # -------------------------------------------------------------------
@@ -220,7 +220,7 @@ log "✅ Connektn stack is deployed and running!"
 echo ""
 echo "📋 Quick test:"
 echo ""
-echo "   export GATEWAY_URL=http://localhost:8080"
+echo "   export GATEWAY_URL=http://localhost:8082"
 echo "   curl \$GATEWAY_URL/healthz"
 echo ""
 echo "📚 Useful commands:"
@@ -230,7 +230,7 @@ echo "     Agent:   kubectl logs -f deployment/connektn-connektn-agent -n $NAMES
 echo "     Gateway: kubectl logs -f deployment/connektn-connektn-gateway -n $NAMESPACE"
 echo ""
 echo "   Configure Stripe webhooks:"
-echo "     stripe listen --forward-to http://localhost:8080/webhooks/stripe"
+echo "     stripe listen --forward-to http://localhost:8082/webhooks/stripe"
 echo ""
 echo "   Check exported data:"
 echo "     kubectl debug -it -n $NAMESPACE <agent-pod> --image=busybox:1.28 --target=agent"
