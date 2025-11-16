@@ -134,7 +134,7 @@ persistence:
 # Agent configuration
 config:
   # CDP Base URL (used by heartbeat and command polling)
-  cdpBaseUrl: "https://api.connektn.io"
+  cdpBaseUrl: "http://host.minikube.internal:8080"
 
   # Agent identity
   agent:
