@@ -135,16 +135,41 @@ type Agent struct {
 	Version        string `yaml:"version"`        // Agent version
 }
 
+// QueueStreamConfig configures a single queue stream
+type QueueStreamConfig struct {
+	MaxBytes    int64  `yaml:"maxBytes"`    // Maximum disk space (bytes)
+	MaxEvents   int64  `yaml:"maxEvents"`   // Maximum number of events
+	DropPolicy  string `yaml:"dropPolicy"`  // "drop_oldest" or "reject_new"
+	SegmentSize int64  `yaml:"segmentSize"` // Segment size for custom WAL (not used in BadgerDB)
+}
+
+// QueueDLQConfig configures the dead letter queue
+type QueueDLQConfig struct {
+	MaxBytes      int64 `yaml:"maxBytes"`      // Maximum disk space (bytes)
+	RetentionDays int   `yaml:"retentionDays"` // Auto-cleanup after N days
+}
+
+// QueueConfig configures durable queues
+type QueueConfig struct {
+	Type    string            `yaml:"type"`    // "memory" (legacy) or "durable" (new)
+	WALPath string            `yaml:"walPath"` // Directory for BadgerDB data
+	Billing QueueStreamConfig `yaml:"billing"` // Billing queue configuration
+	Usage   QueueStreamConfig `yaml:"usage"`   // Usage queue configuration
+	Edges   QueueStreamConfig `yaml:"edges"`   // Edges queue configuration
+	DLQ     QueueDLQConfig    `yaml:"dlq"`     // Dead letter queue configuration
+}
+
 // Config is the root configuration structure.
 type Config struct {
-	Agent     Agent     `yaml:"agent"`
-	Server    Server    `yaml:"server"`
-	Privacy   Privacy   `yaml:"privacy"`
-	Sources   Sources   `yaml:"sources"`
-	Export    Export    `yaml:"export"`
-	Matchers  Matchers  `yaml:"matchers"` // Matcher framework configuration
-	Heartbeat Heartbeat `yaml:"heartbeat"`
-	Control   Control   `yaml:"control"`
+	Agent     Agent       `yaml:"agent"`
+	Server    Server      `yaml:"server"`
+	Privacy   Privacy     `yaml:"privacy"`
+	Sources   Sources     `yaml:"sources"`
+	Export    Export      `yaml:"export"`
+	Matchers  Matchers    `yaml:"matchers"` // Matcher framework configuration
+	Heartbeat Heartbeat   `yaml:"heartbeat"`
+	Control   Control     `yaml:"control"`
+	Queue     QueueConfig `yaml:"queue"` // Queue configuration
 }
 
 // Load reads a YAML configuration file from the given path, resolves environment
