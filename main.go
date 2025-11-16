@@ -16,12 +16,13 @@ import (
 	"linker-agent/internal/agentid"
 	"linker-agent/internal/config"
 	stripec "linker-agent/internal/connectors/stripe"
-	"linker-agent/internal/control"
 	"linker-agent/internal/exporter"
 	"linker-agent/internal/ingest/stripewebhook"
 	"linker-agent/internal/matchers"
 	"linker-agent/internal/models"
 	"linker-agent/internal/pipeline"
+	"linker-agent/internal/polling"
+	"linker-agent/internal/state"
 
 	"go.uber.org/zap"
 )
@@ -503,12 +504,19 @@ func runWebhookServer(ctx context.Context, cfg config.Config, tenantSalt []byte)
 	}
 	log.Printf("Agent ID: %s", agentID)
 
+	// Create state manager for persisting runtime configuration changes
+	stateManager, err := state.NewManager("/var/lib/connektn/agent-state.json")
+	if err != nil {
+		log.Fatalf("Failed to create state manager: %v", err)
+	}
+
 	// Create agent instance
 	agentInstance, err := agent.New(agent.Config{
 		AgentID:        agentID,
 		OrganizationID: cfg.Agent.OrganizationID,
 		Version:        cfg.Agent.Version,
 		InitialMode:    cfg.Privacy.Mode,
+		StateManager:   stateManager,
 		Logger:         logger,
 	})
 	if err != nil {
@@ -608,11 +616,21 @@ func runWebhookServer(ctx context.Context, cfg config.Config, tenantSalt []byte)
 	defer handlerCancel()
 	handler.Start(handlerCtx)
 
+	// Set shutdown function for graceful restart
+	agentInstance.SetShutdownFunc(handlerCancel)
+
 	// Start heartbeat sender if enabled
 	var heartbeatSender *agent.HeartbeatSender
 	if cfg.Heartbeat.Enabled {
+		// Construct heartbeat endpoint from base URL
+		heartbeatEndpoint := cfg.CDPBaseURL + "/api/agent/heartbeat"
+		if cfg.Heartbeat.Endpoint != "" {
+			// Use legacy full endpoint URL for backward compatibility
+			heartbeatEndpoint = cfg.Heartbeat.Endpoint
+		}
+
 		heartbeatSender, err = agent.NewHeartbeatSender(agentInstance, agent.HeartbeatSenderConfig{
-			Endpoint:     cfg.Heartbeat.Endpoint,
+			Endpoint:     heartbeatEndpoint,
 			Interval:     cfg.Heartbeat.Interval,
 			Secret:       cfg.Heartbeat.SignatureSecret,
 			QueueMetrics: exp, // Exporter implements QueueMetricsProvider
@@ -623,38 +641,32 @@ func runWebhookServer(ctx context.Context, cfg config.Config, tenantSalt []byte)
 		}
 
 		go heartbeatSender.Start(handlerCtx)
-		log.Printf("Heartbeat sender started (interval: %v, endpoint: %s)", cfg.Heartbeat.Interval, cfg.Heartbeat.Endpoint)
+		log.Printf("Heartbeat sender started (interval: %v, endpoint: %s)", cfg.Heartbeat.Interval, heartbeatEndpoint)
 	}
 
-	// Start control server if enabled
-	var controlServer *control.Server
-	if cfg.Control.Enabled {
-		controlServer = control.NewServer(control.ServerConfig{
-			ListenAddr:      cfg.Control.ListenAddr,
-			SignatureSecret: cfg.Control.SignatureSecret,
-			MaxClockSkew:    cfg.Control.MaxClockSkew,
-			NonceCacheTTL:   cfg.Control.NonceCache.TTL,
-			Logger:          logger,
+	// Start command polling if enabled
+	if cfg.CommandPolling.Enabled {
+		poller, err := polling.NewPoller(polling.PollerConfig{
+			CDPBaseURL:     cfg.CDPBaseURL,
+			AgentID:        agentID,
+			OrganizationID: cfg.Agent.OrganizationID,
+			Secret:         cfg.CommandPolling.SignatureSecret,
+			Interval:       cfg.CommandPolling.Interval,
+			Timeout:        cfg.CommandPolling.Timeout,
+			Logger:         logger,
 		})
+		if err != nil {
+			log.Fatalf("Failed to create command poller: %v", err)
+		}
 
 		// Register command handlers
-		handlers := control.NewHandlers(agentInstance, logger)
-		controlServer.RegisterCommand(control.CommandStop, handlers.HandleStop)
-		controlServer.RegisterCommand(control.CommandStart, handlers.HandleStart)
-		controlServer.RegisterCommand(control.CommandRestart, handlers.HandleRestart)
-		controlServer.RegisterCommand(control.CommandSwitchMode, handlers.HandleSwitchMode)
-		controlServer.RegisterCommand(control.CommandUpgrade, handlers.HandleUpgrade)
+		handlers := polling.NewHandlers(agentInstance, logger)
+		poller.RegisterHandler(polling.CommandSwitchMode, handlers.HandleSwitchMode)
+		poller.RegisterHandler(polling.CommandRestart, handlers.HandleRestart)
+		poller.RegisterHandler(polling.CommandUpgrade, handlers.HandleUpgrade)
 
-		// Set shutdown function
-		agentInstance.SetShutdownFunc(handlerCancel)
-
-		go func() {
-			if err := controlServer.Start(); err != nil {
-				log.Printf("Control server error: %v", err)
-			}
-		}()
-
-		log.Printf("Control server started on %s", cfg.Control.ListenAddr)
+		go poller.Start(handlerCtx)
+		log.Printf("Command polling started (interval: %v, base URL: %s)", cfg.CommandPolling.Interval, cfg.CDPBaseURL)
 	}
 
 	// Setup HTTP server
@@ -703,13 +715,6 @@ func runWebhookServer(ctx context.Context, cfg config.Config, tenantSalt []byte)
 			log.Printf("HTTP server shutdown error: %v", err)
 		}
 
-		// Shutdown control server
-		if controlServer != nil {
-			if err := controlServer.Shutdown(shutdownCtx); err != nil {
-				log.Printf("Control server shutdown error: %v", err)
-			}
-		}
-
 		// Shutdown webhook handler
 		if err := handler.Shutdown(shutdownCtx); err != nil {
 			log.Printf("Webhook handler shutdown error: %v", err)
@@ -734,9 +739,8 @@ func runWebhookServer(ctx context.Context, cfg config.Config, tenantSalt []byte)
 	log.Printf("  • Liveness probe: /healthz")
 	log.Printf("  • Readiness probe: /readyz")
 	log.Printf("  • Metrics endpoint: /metrics")
-	if cfg.Control.Enabled {
-		log.Printf("Control server: %s", cfg.Control.ListenAddr)
-		log.Printf("  • Command endpoint: /api/control/command")
+	if cfg.CommandPolling.Enabled {
+		log.Printf("Command polling enabled: %s (interval: %v)", cfg.CDPBaseURL, cfg.CommandPolling.Interval)
 	}
 	if cfg.Heartbeat.Enabled {
 		log.Printf("Heartbeat: %s (every %v)", cfg.Heartbeat.Endpoint, cfg.Heartbeat.Interval)
