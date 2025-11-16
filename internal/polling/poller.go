@@ -50,8 +50,9 @@ type PollRequest struct {
 type AckRequest struct {
 	AgentID        string `json:"agentId"`
 	OrganizationID string `json:"organizationId"`
+	CommandID      string `json:"commandId"`
 	Status         string `json:"status"` // "success" or "error"
-	ErrorMessage   string `json:"errorMessage,omitempty"`
+	Message        string `json:"message,omitempty"`
 }
 
 // CommandHandler processes a specific command type
@@ -259,14 +260,15 @@ func (p *Poller) poll(ctx context.Context) (*Command, error) {
 
 // acknowledge sends an acknowledgment for a command
 func (p *Poller) acknowledge(ctx context.Context, commandID, status, errorMessage string) {
-	ackURL := fmt.Sprintf("%s/api/agents/%s/commands/%s/ack", p.cdpBaseURL, p.agentID, commandID)
+	ackURL := fmt.Sprintf("%s/api/agent/command/result", p.cdpBaseURL)
 
 	// Create request body
 	reqBody := AckRequest{
 		AgentID:        p.agentID,
 		OrganizationID: p.organizationID,
+		CommandID:      commandID,
 		Status:         status,
-		ErrorMessage:   errorMessage,
+		Message:        errorMessage,
 	}
 
 	bodyBytes, err := json.Marshal(reqBody)
