@@ -1,70 +1,147 @@
-# Story 2 – Tenant Agent Management & Heartbeats
 
-## Before you start
-Read and follow all rules in `CLAUDE.md`.  
-Use the existing Linker Agent heartbeat logic and extend it to tenant-visible status in the Cloud UI.
+# Story – Linker Agent: Poll-Based Control Commands
 
----
-
-## Goal
-Enable tenants to **view and control their on-prem Linker Agents** directly from the Connektn Cloud dashboard.
-
-Agents must send periodic heartbeats containing health, queue, and mode data, and accept signed control commands from the cloud (restart, stop, switch mode, upgrade).
+## Before You Start
+- Follow all rules in `CLAUDE.md`.
+- This prompt defines the **agent-side** implementation of a poll-based command system.
+- Heartbeats remain fast and unchanged.
 
 ---
 
-## Scope
-### Agent-side
-- Extend heartbeat payload to include:
-  - agent_id, organization_id, version, uptime, mode, queue_depth, dlq_size, retry_count, last_flush_ts.
-  - optional resource usage (CPU%, memory%, disk usage, network lag).
-- Send heartbeat every 30s (configurable).
-- Implement a control command handler:
-  - Securely validate cloud signature.
-  - Support commands: `restart`, `stop`, `start`, `switch_mode`, `upgrade`.
-  - Queue pending command results to next heartbeat.
+# Goal
+Add support to the agent for:
 
-### Cloud-side
-- API endpoints for agent status and control actions:
-  - `GET /api/agents` (list + filter by org).
-  - `POST /api/agents/{id}/actions` with command + signature.
-- Store agent health data in time-series DB (Influx/ClickHouse/Timescale).
-- Update tenant dashboard UI:
-  - Agent card showing version, mode, uptime, queue depth, DLQ size.
-  - Action buttons for control commands.
+1. Polling a dedicated cloud endpoint at a configurable interval.
+2. Parsing optional commands returned by the poll endpoint; supported commands: `restart`, `switch_mode`, `upgrade`.
+3. Executing commands.
+4. Reporting results to a designated command-result endpoint.
+5. Handling malformed or unknown commands gracefully.
 
-### Security
-- Heartbeat messages signed with agent keypair.
-- Cloud commands signed with Connektn API key, verified by agent.
-- Replay protection (nonce + timestamp).
+Use CONTROL_SECRET for signing requests.
 
 ---
 
-## Acceptance Criteria
-1. Agents send regular heartbeats; dashboard updates live.
-2. Tenant sees accurate agent mode, uptime, queue depth, and DLQ.
-3. Control actions execute safely and return result codes.
-4. Signature verification prevents spoofing or replay.
-5. No cloud credentials stored in agent.
-6. Heartbeat delay >2 intervals triggers `unhealthy` status.
+# Architecture Overview (Agent)
+
+## 1. Configuration Additions
+Add the following configurable fields:
+
+```yaml
+cloud:
+  baseUrl: "https://cloud.example.com"
+  heartbeatEndpoint: "/api/agents/{agentId}/heartbeats"
+  commandPollEndpoint: "/api/agents/{agentId}/commands/poll"
+  commandResultEndpointTemplate: "/api/agents/{agentId}/commands/{commandId}/result"
+  commandPollIntervalSeconds: 60   # default
+```
 
 ---
 
-## Test Plan
-- Unit: signature validation, replay protection, command parsing.
-- Integration: agent ↔ cloud communication over mTLS.
-- UI: manual verification of heartbeat updates and action buttons.
-- Stress: simulate 1k tenants (1k agents) with 30s heartbeat cadence.
+## 2. Poll Loop
+
+Add a goroutine:
+
+```
+for {
+    sleep(pollInterval)
+    pollForCommands()
+}
+```
+
+`pollForCommands()`:
+1. Build request with `agentId`, `organizationId`, timestamp, signature.
+2. POST to `commandPollEndpoint`.
+3. If empty body → return.
+4. Else parse JSON:
+   ```
+   {
+     "commandId": "...",
+     "command": "restart",
+     "params": { "mode": "graceful" }
+   }
+   ```
+5. Dispatch to command executor.
 
 ---
 
-## Deliverables
-- Agent heartbeat module under `agent/heartbeat/`.
-- Cloud API endpoints under `cloud/api/agents/`.
-- Dashboard UI component: `AgentStatusCard.vue`.
-- Documentation `/docs/tenant-agent-management.md`.
+## 3. Command Execution
+
+Add a dispatcher:
+
+```go
+type Command struct {
+    CommandId string
+    Command   string
+    Params    map[string]any
+}
+
+func (a *Agent) handleCommand(cmd Command) (status, message string) {
+    switch cmd.Command {
+    case "restart":
+        return a.executor.Restart(cmd.Params)
+    case "upgrade":
+        return a.executor.Upgrade(cmd.Params)
+    default:
+        return "error", "unknown command"
+    }
+}
+```
+
+Executor responsibilities:
+- `Restart`: graceful restart (supervisor signal)
+- `Upgrade`: placeholder for future version upgrade
+- `SwitchMode`: change privacy mode without restart
+- Return `(status, message)` where status = `"success"` | `"error"`
 
 ---
 
-**Author:** Tomas Zezula  
-**Status:** Done
+## 4. Reporting Command Results
+
+After execution:
+
+1. Construct:
+
+```
+{
+  "status": "success",   // or "error"
+  "message": "Restarted gracefully"
+}
+```
+
+2. POST to:
+   - `commandResultEndpointTemplate`
+   - substitute `{agentId}`, `{commandId}`
+
+If the request fails:
+- Log error
+- Optionally retry once or rely on cloud-side timeout
+- Continue normal operation
+
+---
+
+## 5. Error Handling
+- Malformed command → `"error"` + log
+- Unknown command → `"error: unknown command"`
+- Execution panic → catch, log, report `"error"`
+- No command persistence needed locally
+- Poll interval strictly controls frequency (no tight looping)
+
+---
+
+# Acceptance Criteria
+
+1. Agent polls for commands regularly.
+2. Empty poll response results in no action.
+3. Valid command results in correct execution.
+4. Execution result POSTed to cloud.
+5. Agent does not crash on malformed commands.
+6. Heartbeat logic remains unaffected.
+7. Poll interval is configurable.
+
+---
+
+# Deliverables
+- Poll loop implementation
+- Command dispatcher & executor
+- Result reporting client
+- Updated documentation: `/docs/linker-agent-control.md`
