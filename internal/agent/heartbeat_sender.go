@@ -95,8 +95,11 @@ func (s *HeartbeatSender) Start(ctx context.Context) {
 			s.logger.Info("heartbeat sender stopped")
 			return
 		case <-ticker.C:
+			s.logger.Info("sending heartbeat")
 			if err := s.sendHeartbeat(ctx); err != nil {
 				s.logger.Error("heartbeat failed", zap.Error(err))
+			} else {
+				s.logger.Info("heartbeat sent successfully")
 			}
 		}
 	}

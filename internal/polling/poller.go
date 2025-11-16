@@ -152,6 +152,7 @@ func (p *Poller) Start(ctx context.Context) {
 
 // pollOnce executes a single poll cycle
 func (p *Poller) pollOnce(ctx context.Context) {
+	p.logger.Info("polling for commands")
 	cmd, err := p.poll(ctx)
 	if err != nil {
 		p.logger.Warn("command poll failed", zap.Error(err))
@@ -160,6 +161,7 @@ func (p *Poller) pollOnce(ctx context.Context) {
 
 	if cmd == nil {
 		// No command available (204 No Content)
+		p.logger.Info("no commands pending")
 		return
 	}
 
@@ -238,25 +240,37 @@ func (p *Poller) poll(ctx context.Context) (*Command, error) {
 	}
 	defer resp.Body.Close()
 
+	p.logger.Info("poll response received", zap.Int("status_code", resp.StatusCode))
+
 	// Handle 204 No Content (no commands available)
 	if resp.StatusCode == http.StatusNoContent {
+		p.logger.Info("server returned 204 No Content")
 		return nil, nil
 	}
 
 	// Handle errors
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		p.logger.Warn("server returned error", zap.Int("status_code", resp.StatusCode), zap.String("body", string(body)))
 		return nil, fmt.Errorf("poll request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
+	// Read and log response body
+	bodyBytes, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", readErr)
+	}
+	p.logger.Info("server response body", zap.String("body", string(bodyBytes)))
+
 	// Parse command
 	var cmd Command
-	if err := json.NewDecoder(resp.Body).Decode(&cmd); err != nil {
+	if err := json.Unmarshal(bodyBytes, &cmd); err != nil {
 		return nil, fmt.Errorf("failed to decode command: %w", err)
 	}
 
 	// Check if command is empty (server returned {} instead of 204)
 	if cmd.CommandID == "" || cmd.Command == "" {
+		p.logger.Info("server returned empty command (treating as no command)")
 		return nil, nil
 	}
 
