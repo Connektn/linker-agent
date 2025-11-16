@@ -255,6 +255,11 @@ func (p *Poller) poll(ctx context.Context) (*Command, error) {
 		return nil, fmt.Errorf("failed to decode command: %w", err)
 	}
 
+	// Check if command is empty (server returned {} instead of 204)
+	if cmd.CommandID == "" || cmd.Command == "" {
+		return nil, nil
+	}
+
 	return &cmd, nil
 }
 
