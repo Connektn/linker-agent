@@ -79,7 +79,7 @@ spec:
               name: {{ include "connektn-agent.secretName" . }}
               key: HEARTBEAT_SECRET
         {{- end }}
-        {{- if .Values.config.control.enabled }}
+        {{- if .Values.config.commandPolling.enabled }}
         - name: CONTROL_SECRET
           valueFrom:
             secretKeyRef:
@@ -130,11 +130,6 @@ spec:
         - name: http
           containerPort: {{ .Values.service.port }}
           protocol: TCP
-        {{- if .Values.config.control.enabled }}
-        - name: control
-          containerPort: 8081
-          protocol: TCP
-        {{- end }}
         {{- if eq .Values.mode "webhook" }}
         livenessProbe:
           {{- toYaml .Values.livenessProbe | nindent 10 }}

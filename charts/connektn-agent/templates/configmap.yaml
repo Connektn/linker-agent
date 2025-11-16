@@ -17,6 +17,10 @@ data:
       version: {{ .Chart.AppVersion | quote }}
       {{- end }}
 
+    {{- if .Values.config.cdpBaseUrl }}
+    cdpBaseUrl: {{ .Values.config.cdpBaseUrl | quote }}
+    {{- end }}
+
     server:
       addr: {{ .Values.config.server.addr | quote }}
 
@@ -24,19 +28,19 @@ data:
     heartbeat:
       enabled: {{ .Values.config.heartbeat.enabled }}
       interval: {{ .Values.config.heartbeat.interval }}
+      {{- if .Values.config.heartbeat.endpoint }}
       endpoint: {{ .Values.config.heartbeat.endpoint | quote }}
+      {{- end }}
       signatureSecret: "env:HEARTBEAT_SECRET"
     {{- end }}
 
-    {{- if .Values.config.control.enabled }}
-    control:
-      enabled: {{ .Values.config.control.enabled }}
-      listenAddr: {{ .Values.config.control.listenAddr | quote }}
+    {{- if .Values.config.commandPolling.enabled }}
+    commandPolling:
+      enabled: {{ .Values.config.commandPolling.enabled }}
+      interval: {{ .Values.config.commandPolling.interval }}
       signatureSecret: "env:CONTROL_SECRET"
-      maxClockSkew: {{ .Values.config.control.maxClockSkew }}
-      nonceCache:
-        ttl: {{ .Values.config.control.nonceCache.ttl }}
-        capacity: {{ .Values.config.control.nonceCache.capacity }}
+      maxClockSkew: {{ .Values.config.commandPolling.maxClockSkew }}
+      timeout: {{ .Values.config.commandPolling.timeout }}
     {{- end }}
 
     privacy:
