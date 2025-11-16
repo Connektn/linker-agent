@@ -41,9 +41,20 @@ connektn-agent:
 
   # Agent configuration
   config:
+    # CDP Base URL for heartbeat and command polling (local development)
+    cdpBaseUrl: "http://host.minikube.internal:8080"
+
     privacy:
       mode: "strict"
       idMode: "strict"
+
+    # Command polling configuration
+    commandPolling:
+      enabled: true
+      interval: 30s
+      maxClockSkew: 300s
+      timeout: 10s
+
     export:
       mode: "http"
       http:
