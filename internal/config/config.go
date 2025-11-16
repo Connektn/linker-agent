@@ -288,7 +288,7 @@ func validate(cfg *Config) error {
 	}
 
 	// Apply heartbeat defaults and validate
-	if err := validateHeartbeat(&cfg.Heartbeat); err != nil {
+	if err := validateHeartbeat(&cfg.Heartbeat, cfg.CDPBaseURL); err != nil {
 		return fmt.Errorf("heartbeat: %w", err)
 	}
 
@@ -492,7 +492,7 @@ func validateStripeWebhook(webhook *StripeWebhook) error {
 }
 
 // validateHeartbeat validates and applies defaults to heartbeat configuration
-func validateHeartbeat(hb *Heartbeat) error {
+func validateHeartbeat(hb *Heartbeat, cdpBaseURL string) error {
 	// Apply defaults
 	if hb.Interval == 0 {
 		hb.Interval = 30 * time.Second
@@ -500,8 +500,9 @@ func validateHeartbeat(hb *Heartbeat) error {
 
 	// If heartbeat is enabled, validate required fields
 	if hb.Enabled {
-		if hb.Endpoint == "" {
-			return fmt.Errorf("endpoint must be set when heartbeat is enabled")
+		// Endpoint can be either explicitly set OR derived from cdpBaseURL
+		if hb.Endpoint == "" && cdpBaseURL == "" {
+			return fmt.Errorf("either endpoint or cdpBaseUrl must be set when heartbeat is enabled")
 		}
 		if hb.SignatureSecret == "" {
 			return fmt.Errorf("signatureSecret must be set when heartbeat is enabled")

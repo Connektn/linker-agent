@@ -42,11 +42,13 @@ type Command struct {
 
 // PollRequest is sent to the CDP when polling for commands
 type PollRequest struct {
+	AgentID        string `json:"agentId"`
 	OrganizationID string `json:"organizationId"`
 }
 
 // AckRequest is sent to acknowledge command execution
 type AckRequest struct {
+	AgentID        string `json:"agentId"`
 	OrganizationID string `json:"organizationId"`
 	Status         string `json:"status"` // "success" or "error"
 	ErrorMessage   string `json:"errorMessage,omitempty"`
@@ -192,10 +194,11 @@ func (p *Poller) pollOnce(ctx context.Context) {
 
 // poll sends a poll request to the CDP and returns a command if available
 func (p *Poller) poll(ctx context.Context) (*Command, error) {
-	pollURL := fmt.Sprintf("%s/api/agents/%s/commands/poll", p.cdpBaseURL, p.agentID)
+	pollURL := fmt.Sprintf("%s/api/agent/command/poll", p.cdpBaseURL)
 
 	// Create request body
 	reqBody := PollRequest{
+		AgentID:        p.agentID,
 		OrganizationID: p.organizationID,
 	}
 
@@ -260,6 +263,7 @@ func (p *Poller) acknowledge(ctx context.Context, commandID, status, errorMessag
 
 	// Create request body
 	reqBody := AckRequest{
+		AgentID:        p.agentID,
 		OrganizationID: p.organizationID,
 		Status:         status,
 		ErrorMessage:   errorMessage,
