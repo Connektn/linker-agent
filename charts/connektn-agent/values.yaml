@@ -133,6 +133,9 @@ persistence:
 
 # Agent configuration
 config:
+  # CDP Base URL (used by heartbeat and command polling)
+  cdpBaseUrl: "http://host.minikube.internal:8080"
+
   # Agent identity
   agent:
     # Agent ID will be auto-generated and persisted if not specified
@@ -149,18 +152,16 @@ config:
   heartbeat:
     enabled: true
     interval: 30s
-    endpoint: "https://api.connektn.io/agent/heartbeat"
+    # endpoint: "https://api.connektn.io/agent/heartbeat"  # DEPRECATED: Use cdpBaseUrl instead
     # signatureSecret will be loaded from secret
 
-  # Control command server configuration
-  control:
+  # Command polling configuration (agent polls CDP for commands)
+  commandPolling:
     enabled: true
-    listenAddr: ":8081"
+    interval: 30s
     # signatureSecret will be loaded from secret
     maxClockSkew: 300s  # 5 minutes
-    nonceCache:
-      ttl: 600s  # 10 minutes
-      capacity: 1000
+    timeout: 10s
 
   # Privacy configuration
   privacy:

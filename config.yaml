@@ -1,3 +1,6 @@
+# Base URL for Connektn CDP (used by heartbeat and command polling)
+cdpBaseUrl: "https://api.connektn.io"
+
 server:
   addr: ":8080"
 
@@ -11,17 +14,16 @@ agent:
 
 heartbeat:
   enabled: true
-  endpoint: "https://api.connektn.io/agent/heartbeat"
   interval: 30s
   signatureSecret: "env:HEARTBEAT_SECRET"
 
-control:
+# Command polling (agent polls CDP for control commands)
+commandPolling:
   enabled: true
-  listenAddr: ":8081"
+  interval: 30s
   signatureSecret: "env:CONTROL_SECRET"
   maxClockSkew: 5m
-  nonceCache:
-    ttl: 10m
+  timeout: 10s
 
 sources:
   stripe:

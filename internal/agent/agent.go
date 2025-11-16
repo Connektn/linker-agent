@@ -7,6 +7,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"linker-agent/internal/state"
+
 	"go.uber.org/zap"
 )
 
@@ -18,9 +20,10 @@ type Agent struct {
 	version        string
 
 	// State
-	startTime time.Time
-	mode      atomic.Value // string: "strict" or "passthrough"
-	mu        sync.RWMutex
+	startTime    time.Time
+	mode         atomic.Value // string: "strict" or "passthrough"
+	stateManager *state.Manager
+	mu           sync.RWMutex
 
 	// Components
 	logger *zap.Logger
@@ -36,6 +39,7 @@ type Config struct {
 	OrganizationID string
 	Version        string
 	InitialMode    string // "strict" or "passthrough"
+	StateManager   *state.Manager
 	Logger         *zap.Logger
 }
 
@@ -51,7 +55,21 @@ func New(cfg Config) (*Agent, error) {
 		cfg.Version = "dev"
 	}
 
+	if cfg.Logger == nil {
+		cfg.Logger = zap.NewNop()
+	}
+
+	// Determine initial mode: state file overrides config
 	mode := cfg.InitialMode
+	if cfg.StateManager != nil {
+		if stateMode := cfg.StateManager.GetPrivacyMode(); stateMode != "" {
+			mode = stateMode
+			cfg.Logger.Info("using privacy mode from state file",
+				zap.String("mode", mode),
+			)
+		}
+	}
+
 	if mode == "" {
 		mode = "strict"
 	}
@@ -59,15 +77,12 @@ func New(cfg Config) (*Agent, error) {
 		return nil, fmt.Errorf("invalid mode: %s", mode)
 	}
 
-	if cfg.Logger == nil {
-		cfg.Logger = zap.NewNop()
-	}
-
 	a := &Agent{
 		id:             cfg.AgentID,
 		organizationID: cfg.OrganizationID,
 		version:        cfg.Version,
 		startTime:      time.Now().UTC(),
+		stateManager:   cfg.StateManager,
 		logger:         cfg.Logger,
 	}
 	a.mode.Store(mode)
@@ -101,6 +116,7 @@ func (a *Agent) GetMode() string {
 }
 
 // SwitchMode switches between strict and passthrough privacy modes
+// and persists the change to the state file
 func (a *Agent) SwitchMode(mode string) error {
 	if mode != "strict" && mode != "passthrough" {
 		return fmt.Errorf("invalid mode: %s (must be 'strict' or 'passthrough')", mode)
@@ -108,6 +124,15 @@ func (a *Agent) SwitchMode(mode string) error {
 
 	oldMode := a.mode.Load().(string)
 	a.mode.Store(mode)
+
+	// Persist mode change to state file
+	if a.stateManager != nil {
+		if err := a.stateManager.SetPrivacyMode(mode); err != nil {
+			// Rollback in-memory mode on persistence failure
+			a.mode.Store(oldMode)
+			return fmt.Errorf("failed to persist mode change: %w", err)
+		}
+	}
 
 	a.logger.Info("privacy mode switched",
 		zap.String("from", oldMode),

@@ -15,11 +15,5 @@ spec:
       targetPort: http
       protocol: TCP
       name: http
-    {{- if .Values.config.control.enabled }}
-    - port: {{ .Values.service.controlPort | default 8081 }}
-      targetPort: control
-      protocol: TCP
-      name: control
-    {{- end }}
   selector:
     {{- include "connektn-agent.selectorLabels" . | nindent 4 }}

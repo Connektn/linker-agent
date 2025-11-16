@@ -109,23 +109,17 @@ type Matchers struct {
 type Heartbeat struct {
 	Enabled         bool          `yaml:"enabled"`         // Enable heartbeat transmission
 	Interval        time.Duration `yaml:"interval"`        // Heartbeat interval (default: 30s)
-	Endpoint        string        `yaml:"endpoint"`        // Cloud endpoint for heartbeats
+	Endpoint        string        `yaml:"endpoint"`        // DEPRECATED: Full endpoint URL (for backward compatibility)
 	SignatureSecret string        `yaml:"signatureSecret"` // HMAC signature secret (may be "env:NAME")
 }
 
-// ControlNonceCache configures the nonce cache for replay protection.
-type ControlNonceCache struct {
-	Size int           `yaml:"size"` // Max number of nonces to cache (default: 1000)
-	TTL  time.Duration `yaml:"ttl"`  // Nonce expiration time (default: 600s)
-}
-
-// Control configures the control command HTTP endpoint.
-type Control struct {
-	Enabled         bool              `yaml:"enabled"`         // Enable control command endpoint
-	ListenAddr      string            `yaml:"listenAddr"`      // Listen address (default: ":8081")
-	SignatureSecret string            `yaml:"signatureSecret"` // HMAC signature secret (may be "env:NAME")
-	MaxClockSkew    time.Duration     `yaml:"maxClockSkew"`    // Max acceptable clock skew (default: 300s)
-	NonceCache      ControlNonceCache `yaml:"nonceCache"`      // Nonce cache configuration
+// CommandPolling configures command polling behavior (agent polls CDP for commands).
+type CommandPolling struct {
+	Enabled         bool          `yaml:"enabled"`         // Enable command polling
+	Interval        time.Duration `yaml:"interval"`        // Polling interval (default: 30s)
+	SignatureSecret string        `yaml:"signatureSecret"` // HMAC signature secret for control commands (may be "env:NAME")
+	MaxClockSkew    time.Duration `yaml:"maxClockSkew"`    // Max acceptable clock skew (default: 300s)
+	Timeout         time.Duration `yaml:"timeout"`         // HTTP request timeout (default: 10s)
 }
 
 // Agent configures agent-specific settings.
@@ -161,15 +155,16 @@ type QueueConfig struct {
 
 // Config is the root configuration structure.
 type Config struct {
-	Agent     Agent       `yaml:"agent"`
-	Server    Server      `yaml:"server"`
-	Privacy   Privacy     `yaml:"privacy"`
-	Sources   Sources     `yaml:"sources"`
-	Export    Export      `yaml:"export"`
-	Matchers  Matchers    `yaml:"matchers"` // Matcher framework configuration
-	Heartbeat Heartbeat   `yaml:"heartbeat"`
-	Control   Control     `yaml:"control"`
-	Queue     QueueConfig `yaml:"queue"` // Queue configuration
+	CDPBaseURL     string         `yaml:"cdpBaseUrl"`    // Base URL for Connektn CDP (e.g., "https://api.connektn.io")
+	Agent          Agent          `yaml:"agent"`
+	Server         Server         `yaml:"server"`
+	Privacy        Privacy        `yaml:"privacy"`
+	Sources        Sources        `yaml:"sources"`
+	Export         Export         `yaml:"export"`
+	Matchers       Matchers       `yaml:"matchers"`       // Matcher framework configuration
+	Heartbeat      Heartbeat      `yaml:"heartbeat"`
+	CommandPolling CommandPolling `yaml:"commandPolling"` // Command polling configuration (replaces Control)
+	Queue          QueueConfig    `yaml:"queue"`          // Queue configuration
 }
 
 // Load reads a YAML configuration file from the given path, resolves environment
@@ -209,7 +204,7 @@ func resolveEnv(cfg *Config) {
 	cfg.Privacy.TenantSalt = resolveEnvValue(cfg.Privacy.TenantSalt)
 	cfg.Agent.OrganizationID = resolveEnvValue(cfg.Agent.OrganizationID)
 	cfg.Heartbeat.SignatureSecret = resolveEnvValue(cfg.Heartbeat.SignatureSecret)
-	cfg.Control.SignatureSecret = resolveEnvValue(cfg.Control.SignatureSecret)
+	cfg.CommandPolling.SignatureSecret = resolveEnvValue(cfg.CommandPolling.SignatureSecret)
 
 	if cfg.Sources.Stripe != nil {
 		cfg.Sources.Stripe.APIKey = resolveEnvValue(cfg.Sources.Stripe.APIKey)
@@ -293,13 +288,13 @@ func validate(cfg *Config) error {
 	}
 
 	// Apply heartbeat defaults and validate
-	if err := validateHeartbeat(&cfg.Heartbeat); err != nil {
+	if err := validateHeartbeat(&cfg.Heartbeat, cfg.CDPBaseURL); err != nil {
 		return fmt.Errorf("heartbeat: %w", err)
 	}
 
-	// Apply control defaults and validate
-	if err := validateControl(&cfg.Control); err != nil {
-		return fmt.Errorf("control: %w", err)
+	// Apply command polling defaults and validate
+	if err := validateCommandPolling(&cfg.CommandPolling); err != nil {
+		return fmt.Errorf("commandPolling: %w", err)
 	}
 
 	return nil
@@ -497,7 +492,7 @@ func validateStripeWebhook(webhook *StripeWebhook) error {
 }
 
 // validateHeartbeat validates and applies defaults to heartbeat configuration
-func validateHeartbeat(hb *Heartbeat) error {
+func validateHeartbeat(hb *Heartbeat, cdpBaseURL string) error {
 	// Apply defaults
 	if hb.Interval == 0 {
 		hb.Interval = 30 * time.Second
@@ -505,8 +500,9 @@ func validateHeartbeat(hb *Heartbeat) error {
 
 	// If heartbeat is enabled, validate required fields
 	if hb.Enabled {
-		if hb.Endpoint == "" {
-			return fmt.Errorf("endpoint must be set when heartbeat is enabled")
+		// Endpoint can be either explicitly set OR derived from cdpBaseURL
+		if hb.Endpoint == "" && cdpBaseURL == "" {
+			return fmt.Errorf("either endpoint or cdpBaseUrl must be set when heartbeat is enabled")
 		}
 		if hb.SignatureSecret == "" {
 			return fmt.Errorf("signatureSecret must be set when heartbeat is enabled")
@@ -517,25 +513,22 @@ func validateHeartbeat(hb *Heartbeat) error {
 }
 
 // validateControl validates and applies defaults to control configuration
-func validateControl(ctrl *Control) error {
+func validateCommandPolling(cp *CommandPolling) error {
 	// Apply defaults
-	if ctrl.ListenAddr == "" {
-		ctrl.ListenAddr = ":8081"
+	if cp.Interval == 0 {
+		cp.Interval = 30 * time.Second
 	}
-	if ctrl.MaxClockSkew == 0 {
-		ctrl.MaxClockSkew = 300 * time.Second // 5 minutes
+	if cp.MaxClockSkew == 0 {
+		cp.MaxClockSkew = 300 * time.Second // 5 minutes
 	}
-	if ctrl.NonceCache.Size == 0 {
-		ctrl.NonceCache.Size = 1000
-	}
-	if ctrl.NonceCache.TTL == 0 {
-		ctrl.NonceCache.TTL = 600 * time.Second // 10 minutes
+	if cp.Timeout == 0 {
+		cp.Timeout = 10 * time.Second
 	}
 
-	// If control is enabled, validate required fields
-	if ctrl.Enabled {
-		if ctrl.SignatureSecret == "" {
-			return fmt.Errorf("signatureSecret must be set when control is enabled")
+	// If command polling is enabled, validate required fields
+	if cp.Enabled {
+		if cp.SignatureSecret == "" {
+			return fmt.Errorf("signatureSecret must be set when command polling is enabled")
 		}
 	}
 
