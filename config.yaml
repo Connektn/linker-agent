@@ -73,3 +73,34 @@ matchers:
     threshold: 0.8
     temporalWindowSec: 3600   # 1 hour
     skuOverlapMin: 0.5
+
+# Durable queue configuration (ensures zero data loss during outages/restarts)
+queue:
+  type: "durable"  # "memory" (legacy, in-memory only) or "durable" (disk-backed with WAL)
+  walPath: "/var/lib/connektn/wal"  # Directory for BadgerDB queue storage
+
+  # Billing queue (Stripe events) - never lose billing data
+  billing:
+    maxBytes: 5368709120      # 5GB max disk usage
+    maxEvents: 1000000        # 1M events max
+    dropPolicy: "reject_new"  # Return 503 to Stripe when full (Stripe will retry)
+    segmentSize: 104857600    # 100MB per segment (not used in BadgerDB)
+
+  # Usage queue (feature/analytics events)
+  usage:
+    maxBytes: 2147483648      # 2GB max
+    maxEvents: 5000000        # 5M events max
+    dropPolicy: "drop_oldest" # OK to lose old metrics-like data
+    segmentSize: 104857600
+
+  # Edges queue (identity link edges)
+  edges:
+    maxBytes: 1073741824      # 1GB max
+    maxEvents: 500000
+    dropPolicy: "drop_oldest"
+    segmentSize: 104857600
+
+  # Dead Letter Queue (poison/invalid events)
+  dlq:
+    maxBytes: 536870912       # 500MB max
+    retentionDays: 7          # Auto-cleanup after 7 days
