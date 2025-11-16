@@ -505,7 +505,8 @@ func runWebhookServer(ctx context.Context, cfg config.Config, tenantSalt []byte)
 	log.Printf("Agent ID: %s", agentID)
 
 	// Create state manager for persisting runtime configuration changes
-	stateManager, err := state.NewManager("/var/lib/connektn/agent-state.json")
+	// Use /home/nonroot/.connektn for writable storage (mounted as emptyDir)
+	stateManager, err := state.NewManager("/home/nonroot/.connektn/agent-state.json")
 	if err != nil {
 		log.Fatalf("Failed to create state manager: %v", err)
 	}
